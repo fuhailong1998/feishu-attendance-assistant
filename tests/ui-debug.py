@@ -79,7 +79,11 @@ def run() -> dict:
             "trendTitle": host.locator("#overtimeTrendHeading").inner_text(),
             "trendPoints": host.locator(".chart-point").count(),
             "trendAvailablePoints": host.locator(".chart-point:not(.gap)").count(),
-            "trendLines": host.locator(".chart-line").count(),
+            "trendCandles": host.locator(".chart-candle-body, .chart-candle-doji").count(),
+            "trendDown": host.locator(".chart-point.down").count(),
+            "trendFlat": host.locator(".chart-point.flat").count(),
+            "trendDownStroke": host.locator(".chart-point.down .chart-candle-wick").evaluate("element => getComputedStyle(element).stroke"),
+            "trendDownFill": host.locator(".chart-point.down .chart-candle-body").evaluate("element => getComputedStyle(element).fill"),
         }
         assert desktop["panel"]["scrollWidth"] == desktop["panel"]["clientWidth"]
         assert desktop["main"]["scrollWidth"] == desktop["main"]["clientWidth"]
@@ -89,15 +93,22 @@ def run() -> dict:
         assert "次日 00:00–05:59" in desktop["schedule"]
         assert desktop["order"] == "近期在前"
         assert desktop["firstDate"] == "2026-07-02"
-        assert desktop["trendTitle"] == "加班趋势"
+        assert desktop["trendTitle"] == "加班 K 线"
         assert desktop["trendPoints"] == 2
         assert desktop["trendAvailablePoints"] == 2
-        assert desktop["trendLines"] >= 1
+        assert desktop["trendCandles"] == 2
+        assert desktop["trendDown"] == 1
+        assert desktop["trendFlat"] == 1
+        assert desktop["trendDownStroke"] == "rgb(180, 35, 24)"
+        assert desktop["trendDownFill"] == "rgb(240, 68, 56)"
         host.locator(".chart-point").first.focus()
         tooltip = host.locator("#overtimeTooltip")
         assert tooltip.evaluate("element => element.classList.contains('open')")
         assert "2026-07-01" in tooltip.inner_text()
         assert "0小时4分" in tooltip.inner_text()
+        assert "首个有效日" in tooltip.inner_text()
+        host.locator(".chart-point").nth(1).focus()
+        assert "▼ 减少" in tooltip.inner_text()
         panel.focus()
         assert not tooltip.evaluate("element => element.classList.contains('open')")
         host.locator("#toggleOrder").click()
@@ -387,6 +398,9 @@ def run() -> dict:
             "jul21": shape_rows["2026-07-21"],
             "jul22": shape_rows["2026-07-22"],
             "trendAvailablePoints": shapes_host.locator(".chart-point:not(.gap)").count(),
+            "trendUp": shapes_host.locator(".chart-point.up").count(),
+            "trendUpStroke": shapes_host.locator(".chart-point.up .chart-candle-wick").first.evaluate("element => getComputedStyle(element).stroke"),
+            "trendUpFill": shapes_host.locator(".chart-point.up .chart-candle-body").first.evaluate("element => getComputedStyle(element).fill"),
         }
         assert shape_messages["rangeStart"] == "2026-06-25"
         assert shape_messages["rangeEnd"] == "2026-07-24"
@@ -402,9 +416,13 @@ def run() -> dict:
         assert shape_messages["jul22"]["sources"] == "1 条"
         assert "进行中" in shape_messages["jul22"]["status"]
         assert shape_messages["jul20"]["sources"] == "—", "Yesterday 消息不能重复归入 7 月 20 日"
+        assert shape_messages["trendUp"] >= 1, "加班较前一有效日增加时应绘制绿色上涨 K 线"
+        assert shape_messages["trendUpStroke"] == "rgb(6, 118, 71)"
+        assert shape_messages["trendUpFill"] == "rgb(236, 253, 243)", "上涨 K 线应为绿色空心样式"
         assert "缺上班卡" in shape_messages["jun30"]["status"]
         assert "解析 8 条" in shape_messages["status"]
         assert shape_messages["trendAvailablePoints"] == 3
+        shapes_host.locator(".trend-card").screenshot(path="/tmp/attendance-browser-kline-up.png")
         shapes_page.close()
 
         browser.close()
@@ -430,6 +448,7 @@ def run() -> dict:
                 "/tmp/attendance-browser-cycle.png",
                 "/tmp/attendance-browser-manual.png",
                 "/tmp/attendance-browser-cross-chat-cache.png",
+                "/tmp/attendance-browser-kline-up.png",
             ],
         }
 

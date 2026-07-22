@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         飞书假勤消息考勤汇总
 // @namespace    https://github.com/fuhailong1998/feishu-attendance-assistant
-// @version      1.0.4
-// @description  跨会话缓存飞书「假勤」记录，统计异常、工时、加班趋势并导出 CSV
+// @version      1.0.5
+// @description  跨会话缓存飞书「假勤」记录，统计异常、工时、加班 K 线并导出 CSV
 // @author       fuhailong1998
 // @homepageURL  https://github.com/fuhailong1998/feishu-attendance-assistant
 // @supportURL   https://github.com/fuhailong1998/feishu-attendance-assistant/issues
@@ -945,7 +945,7 @@
   }
 
   function getOvertimeTrendData(rows) {
-    return (rows || [])
+    const trend = (rows || [])
       .filter((row) => {
         const halfDay = row.manual && (row.manual.type === 'leave-am' || row.manual.type === 'leave-pm');
         return row.status !== '未到' && (row.workday || halfDay);
@@ -961,6 +961,36 @@
           status: row.status,
         };
       });
+    let previous = null;
+    return trend.map((item) => {
+      if (!item.available) {
+        return {
+          ...item,
+          openMinutes: null,
+          closeMinutes: null,
+          highMinutes: null,
+          lowMinutes: null,
+          changeMinutes: null,
+          direction: 'gap',
+          comparisonDate: null,
+        };
+      }
+      const openMinutes = previous ? previous.overtimeMinutes : item.overtimeMinutes;
+      const closeMinutes = item.overtimeMinutes;
+      const changeMinutes = closeMinutes - openMinutes;
+      const candle = {
+        ...item,
+        openMinutes,
+        closeMinutes,
+        highMinutes: Math.max(openMinutes, closeMinutes),
+        lowMinutes: Math.min(openMinutes, closeMinutes),
+        changeMinutes,
+        direction: previous ? (changeMinutes > 0 ? 'up' : changeMinutes < 0 ? 'down' : 'flat') : 'flat',
+        comparisonDate: previous ? previous.date : null,
+      };
+      previous = item;
+      return candle;
+    });
   }
 
   const TEST_API = {
@@ -1819,7 +1849,17 @@
       .trend-head p { margin: 4px 0 0; color: var(--fa-muted); font-size: 10px; line-height: 1.5; }
       .trend-legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px 14px; color: var(--fa-muted); font-size: 10px; }
       .legend-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-      .legend-swatch { display: inline-block; flex: 0 0 auto; width: 18px; height: 3px; border-radius: 99px; background: #2563eb; }
+      .legend-candle { position: relative; display: inline-block; flex: 0 0 auto; width: 10px; height: 16px; color: #667085; }
+      .legend-candle::before { content: ""; position: absolute; left: 4px; top: 0; width: 2px; height: 16px; border-radius: 2px; background: currentColor; }
+      .legend-candle::after { content: ""; position: absolute; left: 1px; top: 4px; width: 8px; height: 8px; border: 1px solid currentColor; border-radius: 2px; background: currentColor; }
+      .legend-candle.up { color: #067647; }
+      .legend-candle.up::after { background: #ecfdf3; }
+      .legend-candle.down { color: #b42318; }
+      .legend-candle.flat::after { top: 7px; height: 2px; border: 0; border-radius: 2px; }
+      .legend-direction { color: var(--fa-ink); font-weight: 700; }
+      .legend-direction.up { color: #067647; }
+      .legend-direction.down { color: #b42318; }
+      .legend-swatch { display: inline-block; flex: 0 0 auto; width: 18px; height: 3px; border-radius: 99px; background: #8090aa; }
       .legend-swatch.average { height: 0; border-top: 2px dashed #8090aa; border-radius: 0; background: transparent; }
       .legend-swatch.gap { width: 8px; height: 8px; border: 2px solid #98a2b3; border-radius: 50%; background: #fff; }
       .trend-scroll { overflow-x: auto; overflow-y: hidden; border: 1px solid #edf0f5; border-radius: 13px; background: linear-gradient(180deg, #fbfdff, #fff); scrollbar-width: thin; }
@@ -1828,16 +1868,24 @@
       .overtime-chart { display: block; width: 100%; height: auto; font-family: var(--fa-font); }
       .chart-grid { stroke: #e8edf5; stroke-width: 1; vector-effect: non-scaling-stroke; }
       .chart-axis-label { fill: #748096; font-size: 10px; font-variant-numeric: tabular-nums; }
-      .chart-area { fill: url(#overtimeAreaGradient); }
-      .chart-line { fill: none; stroke: #2563eb; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
       .chart-average { stroke: #8090aa; stroke-width: 1.4; stroke-dasharray: 5 5; vector-effect: non-scaling-stroke; }
       .chart-average-label { fill: #667085; font-size: 9px; font-weight: 650; }
-      .chart-point { cursor: pointer; outline: none; }
-      .chart-point circle { fill: #fff; stroke: #2563eb; stroke-width: 2.2; vector-effect: non-scaling-stroke; transition: fill .16s ease, stroke-width .16s ease; }
-      .chart-point:hover circle, .chart-point:focus circle { fill: #dbeafe; stroke-width: 4; }
-      .chart-point.peak circle { fill: #fff7e8; stroke: #d97706; }
-      .chart-point.gap circle { fill: #fff; stroke: #98a2b3; stroke-dasharray: 2 2; }
-      .chart-tooltip { position: absolute; z-index: 3; left: 0; top: 0; max-width: 240px; padding: 8px 10px; border: 1px solid #d9e2f2; border-radius: 9px; color: #fff; background: #172033; box-shadow: 0 8px 24px rgba(15,23,42,.2); font-size: 10px; line-height: 1.55; white-space: pre-line; pointer-events: none; opacity: 0; transform: translate(-50%, calc(-100% - 8px)); transition: opacity .14s ease; }
+      .chart-point { --candle-color: #667085; --candle-fill: #98a2b3; cursor: pointer; outline: none; }
+      .chart-point.up { --candle-color: #067647; --candle-fill: #ecfdf3; }
+      .chart-point.down { --candle-color: #b42318; --candle-fill: #f04438; }
+      .chart-point.flat { --candle-color: #475467; --candle-fill: #98a2b3; }
+      .chart-hit { fill: transparent; pointer-events: all; }
+      .chart-candle-wick { stroke: var(--candle-color); stroke-width: 2; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+      .chart-candle-body { fill: var(--candle-fill); stroke: var(--candle-color); stroke-width: 1.4; vector-effect: non-scaling-stroke; transition: filter .16s ease, stroke-width .16s ease; }
+      .chart-candle-doji { stroke: var(--candle-color); stroke-width: 3; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+      .chart-focus-ring { fill: none; stroke: transparent; stroke-width: 2; vector-effect: non-scaling-stroke; }
+      .chart-point:hover .chart-candle-body, .chart-point:focus-visible .chart-candle-body { filter: drop-shadow(0 2px 3px rgba(15,23,42,.2)); stroke-width: 2.8; }
+      .chart-point:hover .chart-candle-doji, .chart-point:focus-visible .chart-candle-doji { stroke-width: 5; }
+      .chart-point:focus-visible .chart-focus-ring { stroke: #155eef; stroke-dasharray: 3 2; }
+      .chart-peak-marker { fill: #b54708; stroke: #fff; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+      .chart-gap-marker { fill: #fff; stroke: #98a2b3; stroke-width: 2.2; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; transition: stroke-width .16s ease; }
+      .chart-point.gap:hover .chart-gap-marker, .chart-point.gap:focus-visible .chart-gap-marker { stroke-width: 4; }
+      .chart-tooltip { position: absolute; z-index: 3; left: 0; top: 0; width: max-content; min-width: 148px; max-width: 240px; padding: 8px 10px; border: 1px solid #d9e2f2; border-radius: 9px; color: #fff; background: #172033; box-shadow: 0 8px 24px rgba(15,23,42,.2); font-size: 10px; line-height: 1.55; white-space: pre-line; pointer-events: none; opacity: 0; transform: translate(-50%, calc(-100% - 8px)); transition: opacity .14s ease; }
       .chart-tooltip.open { opacity: 1; }
       .chart-tooltip.below { transform: translate(-50%, 8px); }
       .trend-empty { display: grid; min-height: 180px; place-items: center; padding: 28px; color: var(--fa-muted); text-align: center; font-size: 11px; line-height: 1.7; }
@@ -1961,7 +2009,7 @@
             <svg viewBox="0 0 24 24" fill="none"><path d="M7 3v3M17 3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m8.5 15 2.2 2.1 4.8-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </div>
           <div class="brand-copy">
-            <h2>考勤洞察 <span class="version">v1.7</span></h2>
+            <h2>考勤洞察 <span class="version">v1.0.5</span></h2>
             <p>从「假勤」消息生成个人考勤概览</p>
           </div>
           <div class="privacy-pill" title="脚本不上传聊天内容">
@@ -2452,6 +2500,8 @@
     const trend = getOvertimeTrendData(rows);
     const available = trend.filter((item) => item.available);
     const gaps = trend.filter((item) => !item.available);
+    const increases = available.filter((item) => item.direction === 'up').length;
+    const decreases = available.filter((item) => item.direction === 'down').length;
     const peak = available.reduce(
       (best, item) => (!best || item.overtimeMinutes > best.overtimeMinutes ? item : best),
       null,
@@ -2460,54 +2510,48 @@
       ? `峰值 ${peak.date.slice(5).replace('-', '/')} · ${minutesToDuration(peak.overtimeMinutes)}`
       : '暂无已记录加班';
     const legend = `<div class="trend-legend" aria-label="图例">
-      <span class="legend-item"><i class="legend-swatch"></i>每日加班</span>
+      <span class="legend-item" aria-label="绿色空心 K 线和上箭头表示较前一有效日增加"><i class="legend-candle up" aria-hidden="true"></i><b class="legend-direction up">▲</b>增加</span>
+      <span class="legend-item" aria-label="红色实心 K 线和下箭头表示较前一有效日减少"><i class="legend-candle down" aria-hidden="true"></i><b class="legend-direction down">▼</b>减少</span>
+      <span class="legend-item"><i class="legend-candle flat" aria-hidden="true"></i><b class="legend-direction">—</b>持平</span>
       ${totals.averageOvertimeMinutes ? '<span class="legend-item"><i class="legend-swatch average"></i>加班日均值</span>' : ''}
       ${gaps.length ? '<span class="legend-item"><i class="legend-swatch gap"></i>暂无完整打卡</span>' : ''}
     </div>`;
     const head = `<div class="trend-head">
-      <div><h3>加班趋势</h3><p>覆盖 ${available.length} 个完整打卡日 · ${peakText}</p></div>
+      <div><h3>加班 K 线</h3><p>覆盖 ${available.length} 个完整打卡日 · ${increases} 涨 ${decreases} 跌 · ${peakText}</p></div>
       ${legend}
     </div>`;
     if (!available.length) {
       return `<section class="card trend-card" aria-labelledby="overtimeTrendHeading">
         ${head.replace('<h3>', '<h3 id="overtimeTrendHeading">')}
-        <div class="trend-empty">暂无可绘制的加班数据。<br>扫描到完整上下班卡，或补录打卡时间后会自动生成趋势。</div>
+        <div class="trend-empty">暂无可绘制的加班数据。<br>扫描到完整上下班卡，或补录打卡时间后会自动生成 K 线。</div>
       </section>`;
     }
 
-    const width = 820;
     const height = 250;
     const margin = { top: 22, right: 18, bottom: 38, left: 48 };
+    const width = Math.max(820, margin.left + margin.right + Math.max(1, trend.length - 1) * 28);
     const plotRight = width - margin.right;
     const plotBottom = height - margin.bottom;
     const plotWidth = plotRight - margin.left;
     const plotHeight = plotBottom - margin.top;
-    const maximum = Math.max(...available.map((item) => item.overtimeMinutes));
+    const maximum = Math.max(...available.map((item) => item.highMinutes));
     const yMaximum = Math.max(60, Math.ceil(maximum / 60) * 60);
     const xAt = (index) => trend.length === 1
       ? margin.left + plotWidth / 2
       : margin.left + (index / (trend.length - 1)) * plotWidth;
     const yAt = (minutes) => plotBottom - (Math.min(yMaximum, Math.max(0, minutes)) / yMaximum) * plotHeight;
+    const pointSpacing = trend.length > 1 ? plotWidth / (trend.length - 1) : 28;
+    const candleWidth = Math.max(8, Math.min(14, pointSpacing * 0.48));
+    const hitWidth = Math.max(candleWidth + 8, Math.min(28, pointSpacing * 0.9));
     const plotted = trend.map((item, index) => ({
       ...item,
       x: xAt(index),
-      y: item.available ? yAt(item.overtimeMinutes) : plotBottom,
+      y: item.available ? yAt(item.closeMinutes) : plotBottom,
+      openY: item.available ? yAt(item.openMinutes) : null,
+      closeY: item.available ? yAt(item.closeMinutes) : null,
+      highY: item.available ? yAt(item.highMinutes) : null,
+      lowY: item.available ? yAt(item.lowMinutes) : null,
     }));
-    const segments = [];
-    let segment = [];
-    for (const item of plotted) {
-      if (item.available) segment.push(item);
-      else if (segment.length) {
-        segments.push(segment);
-        segment = [];
-      }
-    }
-    if (segment.length) segments.push(segment);
-    const linePaths = segments.map((items) => `<path class="chart-line" d="${items.map((item, index) => `${index ? 'L' : 'M'} ${item.x.toFixed(2)} ${item.y.toFixed(2)}`).join(' ')}"></path>`).join('');
-    const areaPaths = segments
-      .filter((items) => items.length > 1)
-      .map((items) => `<path class="chart-area" d="M ${items[0].x.toFixed(2)} ${plotBottom} ${items.map((item) => `L ${item.x.toFixed(2)} ${item.y.toFixed(2)}`).join(' ')} L ${items[items.length - 1].x.toFixed(2)} ${plotBottom} Z"></path>`)
-      .join('');
     const grid = Array.from({ length: 5 }, (_, index) => {
       const ratio = index / 4;
       const y = margin.top + ratio * plotHeight;
@@ -2528,36 +2572,72 @@
       : '';
     const points = plotted.map((item) => {
       const isPeak = peak && peak.overtimeMinutes > 0 && item.date === peak.date;
-      const tooltip = item.available
-        ? `${item.date} ${item.weekday}\n加班：${item.overtimeMinutes ? minutesToDuration(item.overtimeMinutes) : '无'}\n有效工时：${minutesToDuration(item.workMinutes)}`
-        : `${item.date} ${item.weekday}\n${item.status}\n暂无完整上下班卡，未计入趋势`;
+      if (!item.available) {
+        const tooltip = `${item.date} ${item.weekday}\n${item.status}\n暂无完整上下班卡，未计入 K 线`;
+        return `<g class="chart-point gap" tabindex="0" focusable="true" role="img" aria-label="${escapeHtml(tooltip.replace(/\n/g, '，'))}" data-tooltip="${escapeHtml(tooltip)}" data-chart-x="${item.x.toFixed(2)}" data-chart-y="${plotBottom}">
+          <rect class="chart-hit" x="${(item.x - hitWidth / 2).toFixed(2)}" y="${margin.top}" width="${hitWidth.toFixed(2)}" height="${plotHeight}"></rect>
+          <rect class="chart-focus-ring" x="${(item.x - 9).toFixed(2)}" y="${plotBottom - 9}" width="18" height="18" rx="5"></rect>
+          <circle class="chart-gap-marker" cx="${item.x.toFixed(2)}" cy="${plotBottom}" r="4"></circle>
+          <title>${escapeHtml(tooltip.replace(/\n/g, '；'))}</title>
+        </g>`;
+      }
+      const comparison = item.comparisonDate
+        ? `前一有效日 ${item.comparisonDate.slice(5).replace('-', '/')}：${item.openMinutes ? minutesToDuration(item.openMinutes) : '无'}`
+        : `比较基线：首个有效日（${item.openMinutes ? minutesToDuration(item.openMinutes) : '无'}）`;
+      const change = item.comparisonDate
+        ? item.changeMinutes > 0
+          ? `▲ 增加 ${minutesToDuration(item.changeMinutes)}`
+          : item.changeMinutes < 0
+            ? `▼ 减少 ${minutesToDuration(Math.abs(item.changeMinutes))}`
+            : '— 持平'
+        : '— 首个有效日';
+      const tooltip = `${item.date} ${item.weekday}\n${comparison}\n当日加班：${item.closeMinutes ? minutesToDuration(item.closeMinutes) : '无'}\n变化：${change}\n有效工时：${minutesToDuration(item.workMinutes)}`;
       const classes = ['chart-point'];
-      if (!item.available) classes.push('gap');
+      classes.push(item.direction);
       if (isPeak) classes.push('peak');
-      return `<g class="${classes.join(' ')}" tabindex="0" focusable="true" role="img" aria-label="${escapeHtml(tooltip.replace(/\n/g, '，'))}" data-tooltip="${escapeHtml(tooltip)}">
-        <circle cx="${item.x.toFixed(2)}" cy="${item.y.toFixed(2)}" r="${isPeak ? 5 : 4}"></circle>
+      const bodyTop = Math.min(item.openY, item.closeY);
+      const rawBodyHeight = Math.abs(item.closeY - item.openY);
+      const bodyHeight = Math.max(3, rawBodyHeight);
+      const bodyY = Math.max(margin.top, Math.min(plotBottom - bodyHeight, bodyTop - (bodyHeight - rawBodyHeight) / 2));
+      const focusY = Math.max(margin.top, bodyY - 5);
+      const focusHeight = Math.max(13, bodyHeight + 10);
+      const candleShape = item.direction === 'flat'
+        ? `<line class="chart-candle-doji" x1="${(item.x - candleWidth / 2).toFixed(2)}" y1="${item.closeY.toFixed(2)}" x2="${(item.x + candleWidth / 2).toFixed(2)}" y2="${item.closeY.toFixed(2)}"></line>`
+        : `<rect class="chart-candle-body" x="${(item.x - candleWidth / 2).toFixed(2)}" y="${bodyY.toFixed(2)}" width="${candleWidth.toFixed(2)}" height="${bodyHeight.toFixed(2)}" rx="1.5"></rect>`;
+      const peakMarkerY = Math.max(margin.top + 3, item.highY - 7);
+      const peakMarker = isPeak
+        ? `<path class="chart-peak-marker" d="M ${item.x.toFixed(2)} ${(peakMarkerY - 3).toFixed(2)} l 3 5 h -6 Z"></path>`
+        : '';
+      return `<g class="${classes.join(' ')}" tabindex="0" focusable="true" role="img" aria-label="${escapeHtml(tooltip.replace(/\n/g, '，'))}" data-chart-x="${item.x.toFixed(2)}" data-chart-y="${item.closeY.toFixed(2)}" data-tooltip="${escapeHtml(tooltip)}">
+        <rect class="chart-hit" x="${(item.x - hitWidth / 2).toFixed(2)}" y="${margin.top}" width="${hitWidth.toFixed(2)}" height="${plotHeight}"></rect>
+        <rect class="chart-focus-ring" x="${(item.x - candleWidth / 2 - 5).toFixed(2)}" y="${focusY.toFixed(2)}" width="${(candleWidth + 10).toFixed(2)}" height="${focusHeight.toFixed(2)}" rx="5"></rect>
+        <line class="chart-candle-wick" x1="${item.x.toFixed(2)}" y1="${item.highY.toFixed(2)}" x2="${item.x.toFixed(2)}" y2="${item.lowY.toFixed(2)}"></line>
+        ${candleShape}${peakMarker}
         <title>${escapeHtml(tooltip.replace(/\n/g, '；'))}</title>
       </g>`;
     }).join('');
-    const description = `按工作日展示每日加班。${available.length} 个日期有完整打卡，${gaps.length} 个日期暂无可计算数据。${peakText}。`;
+    const accessibleRows = plotted.map((item) => item.available
+      ? `<li>${escapeHtml(`${item.date}，当日加班 ${item.closeMinutes ? minutesToDuration(item.closeMinutes) : '无'}，${item.comparisonDate ? (item.changeMinutes > 0 ? `较前一有效日增加 ${minutesToDuration(item.changeMinutes)}` : item.changeMinutes < 0 ? `较前一有效日减少 ${minutesToDuration(Math.abs(item.changeMinutes))}` : '较前一有效日持平') : '首个有效日'}`)}</li>`
+      : `<li>${escapeHtml(`${item.date}，暂无完整上下班卡`)}</li>`).join('');
+    const description = `按工作日展示每日加班 K 线。开盘值为前一有效出勤日加班时长，收盘值为当日加班时长；绿色空心和上箭头表示增加，红色实心和下箭头表示减少，灰色横线表示持平。${available.length} 个日期有完整打卡，${gaps.length} 个日期暂无可计算数据。${peakText}。`;
 
     return `<section class="card trend-card" aria-labelledby="overtimeTrendHeading">
       ${head.replace('<h3>', '<h3 id="overtimeTrendHeading">')}
       <figure class="trend-figure">
-        <div class="trend-scroll" tabindex="0" aria-label="加班趋势图，可横向滚动查看完整周期">
-          <div class="trend-stage">
+        <div class="trend-scroll" tabindex="0" aria-label="加班 K 线图，可横向滚动查看完整周期">
+          <div class="trend-stage" style="min-width:${width}px">
             <svg class="overtime-chart" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="overtimeChartTitle overtimeChartDescription">
-              <title id="overtimeChartTitle">加班趋势</title>
+              <title id="overtimeChartTitle">每日加班 K 线</title>
               <desc id="overtimeChartDescription">${escapeHtml(description)}</desc>
-              <defs><linearGradient id="overtimeAreaGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#3b82f6" stop-opacity=".2"></stop><stop offset="100%" stop-color="#3b82f6" stop-opacity=".02"></stop></linearGradient></defs>
-              ${grid}${areaPaths}${averageLine}${linePaths}${points}${xLabels}
+              ${grid}${averageLine}${points}${xLabels}
             </svg>
             <div class="chart-tooltip" id="overtimeTooltip" aria-hidden="true"></div>
           </div>
         </div>
         <figcaption class="sr-only">${escapeHtml(description)}</figcaption>
+        <ul class="sr-only" aria-label="加班 K 线数据">${accessibleRows}</ul>
       </figure>
-      <p class="trend-mobile-hint">可左右滑动查看完整周期；聚焦或悬停数据点可查看详情。</p>
+      <p class="trend-mobile-hint">可左右滑动查看完整周期；聚焦或悬停 K 线可查看前值、当日值与变化。</p>
     </section>`;
   }
 
@@ -2658,10 +2738,24 @@
     tooltip.textContent = point.dataset.tooltip || '';
     tooltip.classList.add('open');
     tooltip.setAttribute('aria-hidden', 'false');
-    const pointRect = point.getBoundingClientRect();
     const stageRect = stage.getBoundingClientRect();
-    const localX = pointRect.left - stageRect.left + pointRect.width / 2;
-    const localY = pointRect.top - stageRect.top + pointRect.height / 2;
+    const chart = point.closest('.overtime-chart');
+    const chartX = Number(point.dataset.chartX);
+    const chartY = Number(point.dataset.chartY);
+    let localX;
+    let localY;
+    if (chart && Number.isFinite(chartX) && Number.isFinite(chartY)) {
+      const chartRect = chart.getBoundingClientRect();
+      const viewBox = chart.viewBox && chart.viewBox.baseVal;
+      const viewWidth = viewBox && viewBox.width ? viewBox.width : chartRect.width;
+      const viewHeight = viewBox && viewBox.height ? viewBox.height : chartRect.height;
+      localX = chartRect.left - stageRect.left + (chartX / viewWidth) * chartRect.width;
+      localY = chartRect.top - stageRect.top + (chartY / viewHeight) * chartRect.height;
+    } else {
+      const pointRect = point.getBoundingClientRect();
+      localX = pointRect.left - stageRect.left + pointRect.width / 2;
+      localY = pointRect.top - stageRect.top + pointRect.height / 2;
+    }
     const halfWidth = tooltip.offsetWidth / 2;
     const visibleLeft = scroller.scrollLeft;
     const visibleRight = visibleLeft + scroller.clientWidth;

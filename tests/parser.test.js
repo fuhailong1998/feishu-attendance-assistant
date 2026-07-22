@@ -541,8 +541,30 @@ const baseConfig = {
   const trend = api.getOvertimeTrendData(result.rows);
   assert.equal(trend.length, 4);
   assert.equal(trend.filter((item) => item.available).length, 3);
-  assert.equal(trend.find((item) => item.date === '2026-07-07').overtimeMinutes, 90);
-  assert.equal(trend.find((item) => item.date === '2026-07-09').available, false, '全天请假不能伪装成 0 加班数据点');
+  const july7Candle = trend.find((item) => item.date === '2026-07-07');
+  const july8Candle = trend.find((item) => item.date === '2026-07-08');
+  const july9Gap = trend.find((item) => item.date === '2026-07-09');
+  assert.equal(july7Candle.overtimeMinutes, 90);
+  assert.equal(july7Candle.openMinutes, 90);
+  assert.equal(july7Candle.closeMinutes, 90);
+  assert.equal(july7Candle.direction, 'flat');
+  assert.equal(july8Candle.openMinutes, 90);
+  assert.equal(july8Candle.closeMinutes, 60);
+  assert.equal(july8Candle.changeMinutes, -30);
+  assert.equal(july8Candle.direction, 'down');
+  assert.equal(july9Gap.available, false, '全天请假不能伪装成 0 加班 K 线');
+  assert.equal(july9Gap.direction, 'gap');
+
+  const risingAcrossGap = api.getOvertimeTrendData([
+    { date: '2026-07-13', weekday: '周一', workday: true, status: '正常', workMinutes: 540, overtimeMinutes: 30 },
+    { date: '2026-07-14', weekday: '周二', workday: true, status: '缺下班卡', workMinutes: null, overtimeMinutes: 0 },
+    { date: '2026-07-15', weekday: '周三', workday: true, status: '正常', workMinutes: 585, overtimeMinutes: 75 },
+  ]);
+  assert.equal(risingAcrossGap[2].comparisonDate, '2026-07-13', '空缺日不应重置相邻有效日比较基线');
+  assert.equal(risingAcrossGap[2].openMinutes, 30);
+  assert.equal(risingAcrossGap[2].closeMinutes, 75);
+  assert.equal(risingAcrossGap[2].changeMinutes, 45);
+  assert.equal(risingAcrossGap[2].direction, 'up');
 }
 
 {
