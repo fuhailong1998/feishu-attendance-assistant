@@ -67,6 +67,19 @@ const baseConfig = {
 }
 
 {
+  const cachedReminder = api.normalizeCachedEvent({
+    date: '2026-07-01',
+    inTimes: [],
+    outTimes: [],
+    unknownTimes: [],
+    flags: { late: true },
+    text: '08:22\n上班打卡提醒\n再不打卡就要迟到了，快去打卡吧~',
+    source: 'message',
+  });
+  assert.equal(cachedReminder, null, '升级后应自动剔除旧缓存中的提醒误记录');
+}
+
+{
   const event = api.parseAttendanceMessage(
     '08:22\n上班打卡成功!\n打卡方式：通过考勤机打卡\n查看详情',
     '2026-07-01',

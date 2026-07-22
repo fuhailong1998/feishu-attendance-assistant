@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         飞书假勤消息考勤汇总
 // @namespace    https://github.com/fuhailong1998/feishu-attendance-assistant
-// @version      1.0.1
+// @version      1.0.2
 // @description  跨会话缓存飞书「假勤」记录，统计异常、工时、加班趋势并导出 CSV
 // @author       fuhailong1998
 // @homepageURL  https://github.com/fuhailong1998/feishu-attendance-assistant
@@ -25,6 +25,7 @@
   const WEEKDAY_NAMES = ['日', '一', '二', '三', '四', '五', '六'];
   const ATTENDANCE_HINT_RE = /(?:假勤|考勤|打卡|上班|下班|签到|签退|到岗|离岗|缺卡|漏卡|迟到|早退|旷工|补卡|外勤|请假|出差|无需打卡|attendance\s+(?:requests?|records?|reports?|summary|machine|results?|exception|irregular)|(?:weekly|monthly)\s+report|clock(?:ed)?\s*(?:in|out)|check(?:ed)?[ -]?(?:in|out)|no record|missing punch)/i;
   const ATTENDANCE_BOT_EVIDENCE_RE = /(?:打卡成功|缺卡通知|考勤申请截止|封存[^\n]{0,80}考勤数据|clocked\s+(?:in|out)\s+successfully|no record notification|attendance requests closing soon|(?:weekly|monthly)\s+report)/i;
+  const PUNCH_REMINDER_RE = /(?:打卡提醒|attendance reminder|(?:clock|check)[ -]?(?:in|out)\s+reminder)/i;
   const DATE_TOKEN_RE = /(?:20\d{2}\s*[年/.\-]\s*\d{1,2}\s*[月/.\-]\s*\d{1,2}\s*日?|\d{1,2}\s*[月/.\-]\s*\d{1,2}\s*日?|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:,\s*20\d{2})?|今天|今日|昨天|昨日|前天|today|yesterday)/i;
   const ENGLISH_MONTHS = Object.freeze({
     jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
@@ -542,7 +543,7 @@
     // 封账/封存提醒只用于发现统计周期，不能因包含“请假、出差”等申请词而计入某一天。
     if (extractAttendanceCycle(normalized, referenceDate)) return null;
     // 打卡提醒描述的是未来动作，即使正文出现“迟到、早退、打卡成功”等词也不是考勤结果。
-    if (/(?:打卡提醒|attendance reminder|(?:clock|check)[ -]?(?:in|out)\s+reminder)/i.test(normalized)) return null;
+    if (PUNCH_REMINDER_RE.test(normalized)) return null;
     let date = options.dateResolved
       ? (extractReferencedAttendanceDate(normalized, referenceDate) || contextDate || null)
       : (extractDateFromText(normalized, referenceDate) || contextDate || null);
@@ -975,6 +976,7 @@
     isAttendanceCycleForMonth,
     manualAdjustmentLabel,
     netWorkMinutes,
+    normalizeCachedEvent,
     normalizeManualAdjustment,
     parseAttendanceMessage,
     parseLocalDate,
@@ -1037,6 +1039,8 @@
 
   function normalizeCachedEvent(value) {
     if (!value || typeof value !== 'object' || !parseLocalDate(value.date)) return null;
+    const text = normalizeText(value.text).slice(0, 5000);
+    if (PUNCH_REMINDER_RE.test(text)) return null;
     const flags = emptyFlags();
     for (const key of Object.keys(flags)) flags[key] = Boolean(value.flags && value.flags[key]);
     const event = {
@@ -1045,7 +1049,7 @@
       outTimes: uniqueSortedTimes(Array.isArray(value.outTimes) ? value.outTimes : []),
       unknownTimes: uniqueSortedTimes(Array.isArray(value.unknownTimes) ? value.unknownTimes : []),
       flags,
-      text: normalizeText(value.text).slice(0, 5000),
+      text,
       source: value.source === 'paste' ? 'paste' : 'message',
     };
     const hasStatus = Object.values(flags).some(Boolean);
