@@ -7,6 +7,8 @@ const vm = require('node:vm');
 
 const scriptPath = path.join(__dirname, '..', 'feishu-attendance.user.js');
 const source = fs.readFileSync(scriptPath, 'utf8');
+assert.match(source, /^\/\/ @match\s+https:\/\/thundersoft\.feishu\.cn\/next\/messenger$/m);
+assert.match(source, /^\/\/ @match\s+https:\/\/thundersoft\.feishu\.cn\/next\/messenger\/\*$/m);
 const sandbox = { console, Date, Intl, setTimeout, clearTimeout };
 vm.createContext(sandbox);
 vm.runInContext(source, sandbox, { filename: scriptPath });

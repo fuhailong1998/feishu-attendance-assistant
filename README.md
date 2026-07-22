@@ -18,7 +18,7 @@
 
 - Chrome、Edge 或 Firefox
 - Tampermonkey
-- `https://thundersoft.feishu.cn/next/messenger/` 及其会话子路由
+- `https://thundersoft.feishu.cn/next/messenger`、尾部带 `/` 的地址及其会话子路由
 
 脚本不会在其他飞书页面或域名运行。
 

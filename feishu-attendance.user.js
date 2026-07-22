@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         飞书假勤消息考勤汇总
 // @namespace    https://github.com/fuhailong1998/feishu-attendance-assistant
-// @version      1.0.2
+// @version      1.0.3
 // @description  跨会话缓存飞书「假勤」记录，统计异常、工时、加班趋势并导出 CSV
 // @author       fuhailong1998
 // @homepageURL  https://github.com/fuhailong1998/feishu-attendance-assistant
 // @supportURL   https://github.com/fuhailong1998/feishu-attendance-assistant/issues
 // @downloadURL  https://raw.githubusercontent.com/fuhailong1998/feishu-attendance-assistant/main/feishu-attendance.user.js
 // @updateURL    https://raw.githubusercontent.com/fuhailong1998/feishu-attendance-assistant/main/feishu-attendance.user.js
+// @match        https://thundersoft.feishu.cn/next/messenger
 // @match        https://thundersoft.feishu.cn/next/messenger/*
 // @run-at       document-idle
 // @grant        none
