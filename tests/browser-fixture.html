@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Userscript browser fixture</title>
+</head>
+<body>
+  <main>
+    <div id="messageScroller" style="height:260px; overflow-y:auto; width:700px">
+      <div class="date-divider">2026年7月1日</div>
+      <article data-message-id="m1">
+        <div>上班打卡成功</div>
+        <div>打卡时间：08:57</div>
+      </article>
+      <article data-message-id="m2">
+        <div>下班打卡成功</div>
+        <div>打卡时间：18:31</div>
+      </article>
+      <article data-message-id="m3">
+        <div>下班打卡提醒</div>
+        <div>请在 18:00 后及时打卡</div>
+      </article>
+      <div class="date-divider">2026年7月2日</div>
+      <article data-message-id="m4">
+        <div>上班打卡成功</div>
+        <div>打卡时间：09:40</div>
+      </article>
+      <article data-message-id="m5">
+        <div>下班打卡成功</div>
+        <div>打卡时间：18:00</div>
+      </article>
+      <div style="height:500px"></div>
+    </div>
+  </main>
+  <output id="result">pending</output>
+  <script src="../feishu-attendance.user.js"></script>
+  <script>
+    window.setTimeout(() => {
+      try {
+        const root = document.querySelector('#fs-attendance-assistant').shadowRoot;
+        root.querySelector('#fab').click();
+        if (window.location.search.includes('settings')) root.querySelector('details').open = true;
+        root.querySelector('#rangeStart').value = '2026-07-01';
+        root.querySelector('#rangeEnd').value = '2026-07-02';
+        document.querySelector('#messageScroller').scrollTop = 9999;
+        root.querySelector('#scanHistory').click();
+        const startedAt = Date.now();
+        const collectResult = () => {
+          const statusText = root.querySelector('#scanStatus').textContent;
+          if (!/扫描完成|扫描停止于|没有找到/.test(statusText) && Date.now() - startedAt < 12000) {
+            window.setTimeout(collectResult, 100);
+            return;
+          }
+          const rowText = [...root.querySelectorAll('tbody tr')]
+            .map((row) => row.innerText.replace(/\s+/g, ' ').trim())
+            .join(' | ');
+          const panel = root.querySelector('#panel');
+          const main = root.querySelector('main');
+          document.querySelector('#result').textContent = JSON.stringify({
+            rowText,
+            statusText,
+            scheduleText: root.querySelector('#scheduleChip').textContent,
+            dangerPills: root.querySelectorAll('.status-pill.danger').length,
+            noHorizontalOverflow: panel.scrollWidth <= panel.clientWidth && main.scrollWidth <= main.clientWidth,
+            panelWidth: [panel.clientWidth, panel.scrollWidth],
+            mainWidth: [main.clientWidth, main.scrollWidth],
+          });
+        };
+        window.setTimeout(collectResult, 100);
+      } catch (error) {
+        document.querySelector('#result').textContent = `ERROR: ${error.stack || error}`;
+      }
+    }, 100);
+  </script>
+</body>
+</html>

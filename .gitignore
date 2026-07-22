@@ -1,0 +1,11 @@
+.codex/
+.codegraph/
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+playwright-report/
+test-results/
+.env
+.env.*

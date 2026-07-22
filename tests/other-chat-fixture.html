@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Messenger other chat fixture</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; }
+    .layout { display: grid; grid-template-columns: 260px 1fr; height: 100vh; }
+    aside { padding: 16px; border-right: 1px solid #ddd; }
+    .conversation-item { display: block; width: 220px; height: 56px; margin-bottom: 8px; text-align: left; cursor: pointer; }
+    #chatRoot { padding: 20px; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside aria-label="会话列表">
+      <button class="conversation-item" aria-current="true"><span>项目讨论群</span></button>
+      <button class="conversation-item" id="attendanceConversation"><span>假勤</span></button>
+    </aside>
+    <main id="chatRoot">
+      <h1>项目讨论群</h1>
+      <p>这里没有假勤消息。</p>
+    </main>
+  </div>
+  <script>
+    document.querySelector('#attendanceConversation').addEventListener('click', () => {
+      window.__attendanceConversationClicked = true;
+      document.querySelector('#chatRoot').innerHTML = `
+        <h1>假勤</h1>
+        <div id="messageScroller" style="height:260px; overflow-y:auto; width:700px">
+          <div class="date-divider">2026年7月1日</div>
+          <article data-message-id="other-chat-in"><div>上班打卡成功</div><div>打卡时间：09:00</div></article>
+          <article data-message-id="other-chat-out"><div>下班打卡成功</div><div>打卡时间：19:30</div></article>
+          <div style="height:500px"></div>
+        </div>`;
+      document.querySelector('#attendanceConversation').setAttribute('aria-current', 'true');
+    });
+  </script>
+  <script src="../feishu-attendance.user.js"></script>
+</body>
+</html>
