@@ -87,6 +87,9 @@ def run() -> dict:
             "chartMode": host.locator(".trend-card").get_attribute("data-active-chart-mode"),
             "candlestickPressed": host.locator("[data-chart-mode='candlestick']").get_attribute("aria-pressed"),
             "linePressed": host.locator("[data-chart-mode='line']").get_attribute("aria-pressed"),
+            "klineX": host.locator(".chart-point:not(.gap)").evaluate_all("points => points.map(point => Number(point.dataset.chartX))"),
+            "candleConnectors": host.locator(".chart-candle-connector").count(),
+            "gapConnectors": host.locator(".chart-candle-connector.through-gap").count(),
         }
         assert desktop["panel"]["scrollWidth"] == desktop["panel"]["clientWidth"]
         assert desktop["main"]["scrollWidth"] == desktop["main"]["clientWidth"]
@@ -107,6 +110,9 @@ def run() -> dict:
         assert desktop["chartMode"] == "candlestick"
         assert desktop["candlestickPressed"] == "true"
         assert desktop["linePressed"] == "false"
+        assert desktop["klineX"][1] - desktop["klineX"][0] <= 34.01, "少量 K 线不应被撑到图表两端"
+        assert desktop["candleConnectors"] == 1
+        assert desktop["gapConnectors"] == 0, "连续日期之间应使用实线连接"
         host.locator(".chart-point").first.focus()
         tooltip = host.locator("#overtimeTooltip")
         assert tooltip.evaluate("element => element.classList.contains('open')")
@@ -127,6 +133,8 @@ def run() -> dict:
         assert host.locator(".chart-area").count() >= 1
         assert host.locator(".chart-point.line-point").count() == 2
         assert host.locator(".chart-candle-body, .chart-candle-doji").count() == 0
+        line_x = host.locator(".chart-point.line-point").evaluate_all("points => points.map(point => Number(point.dataset.chartX))")
+        assert line_x[1] - line_x[0] > 700, "趋势图仍应利用完整绘图区"
         host.locator(".trend-card").screenshot(path="/tmp/attendance-browser-line.png")
         host.locator(".chart-point.line-point").first.focus()
         assert "加班：0小时4分" in tooltip.inner_text()
@@ -431,6 +439,9 @@ def run() -> dict:
             "trendUp": shapes_host.locator(".chart-point.up").count(),
             "trendUpStroke": shapes_host.locator(".chart-point.up .chart-candle-wick").first.evaluate("element => getComputedStyle(element).stroke"),
             "trendUpFill": shapes_host.locator(".chart-point.up .chart-candle-body").first.evaluate("element => getComputedStyle(element).fill"),
+            "candleConnectors": shapes_host.locator(".chart-candle-connector").count(),
+            "gapConnectors": shapes_host.locator(".chart-candle-connector.through-gap").count(),
+            "klineX": shapes_host.locator(".chart-point").evaluate_all("points => points.map(point => Number(point.dataset.chartX))"),
         }
         assert shape_messages["rangeStart"] == "2026-06-25"
         assert shape_messages["rangeEnd"] == "2026-07-24"
@@ -449,6 +460,12 @@ def run() -> dict:
         assert shape_messages["trendUp"] >= 1, "加班较前一有效日增加时应绘制绿色上涨 K 线"
         assert shape_messages["trendUpStroke"] == "rgb(6, 118, 71)"
         assert shape_messages["trendUpFill"] == "rgb(236, 253, 243)", "上涨 K 线应为绿色空心样式"
+        assert shape_messages["candleConnectors"] == 2, "三个有效 K 线数据应产生两条连接线"
+        assert shape_messages["gapConnectors"] >= 1, "跨缺卡日期的 K 线应使用虚线连接"
+        assert all(
+            right - left <= 34.01
+            for left, right in zip(shape_messages["klineX"], shape_messages["klineX"][1:])
+        ), "跨缺卡日期也不应拉大有效 K 线间距"
         assert "缺上班卡" in shape_messages["jun30"]["status"]
         assert "解析 8 条" in shape_messages["status"]
         assert shape_messages["trendAvailablePoints"] == 3

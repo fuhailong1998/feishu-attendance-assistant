@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         飞书假勤消息考勤汇总
 // @namespace    https://github.com/fuhailong1998/feishu-attendance-assistant
-// @version      1.0.6
+// @version      1.0.7
 // @description  跨会话缓存飞书「假勤」记录，统计异常、工时和可切换的加班图表并导出 CSV
 // @author       fuhailong1998
 // @homepageURL  https://github.com/fuhailong1998/feishu-attendance-assistant
@@ -1870,6 +1870,7 @@
       .legend-swatch.line { background: #2563eb; }
       .legend-swatch.average { height: 0; border-top: 2px dashed #8090aa; border-radius: 0; background: transparent; }
       .legend-swatch.gap { width: 8px; height: 8px; border: 2px solid #98a2b3; border-radius: 50%; background: #fff; }
+      .legend-swatch.gap-link { height: 0; border-top: 2px dashed #667085; border-radius: 0; background: transparent; }
       .trend-scroll { overflow-x: auto; overflow-y: hidden; border: 1px solid #edf0f5; border-radius: 13px; background: linear-gradient(180deg, #fbfdff, #fff); scrollbar-width: thin; }
       .trend-figure { margin: 0; }
       .trend-stage { position: relative; min-width: 720px; }
@@ -1885,6 +1886,8 @@
       .chart-point.down { --candle-color: #b42318; --candle-fill: #f04438; }
       .chart-point.flat { --candle-color: #475467; --candle-fill: #98a2b3; }
       .chart-hit { fill: transparent; pointer-events: all; }
+      .chart-candle-connector { fill: none; stroke: #667085; stroke-width: 1.5; stroke-linecap: round; opacity: .82; vector-effect: non-scaling-stroke; }
+      .chart-candle-connector.through-gap { stroke-dasharray: 4 4; opacity: .58; }
       .chart-candle-wick { stroke: var(--candle-color); stroke-width: 2; stroke-linecap: round; vector-effect: non-scaling-stroke; }
       .chart-candle-body { fill: var(--candle-fill); stroke: var(--candle-color); stroke-width: 1.4; vector-effect: non-scaling-stroke; transition: filter .16s ease, stroke-width .16s ease; }
       .chart-candle-doji { stroke: var(--candle-color); stroke-width: 3; stroke-linecap: round; vector-effect: non-scaling-stroke; }
@@ -2024,7 +2027,7 @@
             <svg viewBox="0 0 24 24" fill="none"><path d="M7 3v3M17 3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m8.5 15 2.2 2.1 4.8-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </div>
           <div class="brand-copy">
-            <h2>考勤洞察 <span class="version">v1.0.6</span></h2>
+            <h2>考勤洞察 <span class="version">v1.0.7</span></h2>
             <p>从「假勤」消息生成个人考勤概览</p>
           </div>
           <div class="privacy-pill" title="脚本不上传聊天内容">
@@ -2536,7 +2539,7 @@
           <span class="legend-item" aria-label="红色实心 K 线和下箭头表示较前一有效日减少"><i class="legend-candle down" aria-hidden="true"></i><b class="legend-direction down">▼</b>减少</span>
           <span class="legend-item"><i class="legend-candle flat" aria-hidden="true"></i><b class="legend-direction">—</b>持平</span>
           ${totals.averageOvertimeMinutes ? '<span class="legend-item"><i class="legend-swatch average"></i>加班日均值</span>' : ''}
-          ${gaps.length ? '<span class="legend-item"><i class="legend-swatch gap"></i>暂无完整打卡</span>' : ''}
+          ${gaps.length ? '<span class="legend-item"><i class="legend-swatch gap-link"></i>虚线跨缺卡日</span>' : ''}
         </div>`
       : `<div class="trend-legend" aria-label="趋势图图例">
           <span class="legend-item"><i class="legend-swatch line"></i>每日加班</span>
@@ -2560,29 +2563,39 @@
 
     const height = 250;
     const margin = { top: 22, right: 18, bottom: 38, left: 48 };
-    const width = Math.max(820, margin.left + margin.right + Math.max(1, trend.length - 1) * 28);
+    const horizontalPointCount = isCandlestick ? available.length : trend.length;
+    const width = Math.max(820, margin.left + margin.right + Math.max(1, horizontalPointCount - 1) * 28);
     const plotRight = width - margin.right;
     const plotBottom = height - margin.bottom;
     const plotWidth = plotRight - margin.left;
     const plotHeight = plotBottom - margin.top;
     const maximum = Math.max(...available.map((item) => item.highMinutes));
     const yMaximum = Math.max(60, Math.ceil(maximum / 60) * 60);
-    const xAt = (index) => trend.length === 1
+    const fullPointSpacing = horizontalPointCount > 1 ? plotWidth / (horizontalPointCount - 1) : 34;
+    const pointSpacing = isCandlestick ? Math.min(34, fullPointSpacing) : fullPointSpacing;
+    const occupiedWidth = horizontalPointCount > 1 ? pointSpacing * (horizontalPointCount - 1) : 0;
+    const xStart = isCandlestick ? margin.left + (plotWidth - occupiedWidth) / 2 : margin.left;
+    const lineXAt = (index) => trend.length === 1
       ? margin.left + plotWidth / 2
-      : margin.left + (index / (trend.length - 1)) * plotWidth;
+      : margin.left + index * pointSpacing;
     const yAt = (minutes) => plotBottom - (Math.min(yMaximum, Math.max(0, minutes)) / yMaximum) * plotHeight;
-    const pointSpacing = trend.length > 1 ? plotWidth / (trend.length - 1) : 28;
     const candleWidth = Math.max(8, Math.min(14, pointSpacing * 0.48));
     const hitWidth = Math.max(candleWidth + 8, Math.min(28, pointSpacing * 0.9));
-    const plotted = trend.map((item, index) => ({
-      ...item,
-      x: xAt(index),
-      y: item.available ? yAt(item.closeMinutes) : plotBottom,
-      openY: item.available ? yAt(item.openMinutes) : null,
-      closeY: item.available ? yAt(item.closeMinutes) : null,
-      highY: item.available ? yAt(item.highMinutes) : null,
-      lowY: item.available ? yAt(item.lowMinutes) : null,
-    }));
+    let candleIndex = 0;
+    const plotted = trend.map((item, index) => {
+      const x = isCandlestick
+        ? item.available ? xStart + candleIndex++ * pointSpacing : null
+        : lineXAt(index);
+      return {
+        ...item,
+        x,
+        y: item.available ? yAt(item.closeMinutes) : plotBottom,
+        openY: item.available ? yAt(item.openMinutes) : null,
+        closeY: item.available ? yAt(item.closeMinutes) : null,
+        highY: item.available ? yAt(item.highMinutes) : null,
+        lowY: item.available ? yAt(item.lowMinutes) : null,
+      };
+    });
     const segments = [];
     let segment = [];
     for (const item of plotted) {
@@ -2607,12 +2620,13 @@
       return `<line class="chart-grid" x1="${margin.left}" y1="${y}" x2="${plotRight}" y2="${y}"></line>
         <text class="chart-axis-label" x="${margin.left - 9}" y="${y + 3}" text-anchor="end">${compactDuration(value)}</text>`;
     }).join('');
-    const labelStep = Math.max(1, Math.ceil(trend.length / 6));
-    const labelIndexes = new Set([0, trend.length - 1]);
-    for (let index = 0; index < trend.length; index += labelStep) labelIndexes.add(index);
+    const labelItems = isCandlestick ? plotted.filter((item) => item.available) : plotted;
+    const labelStep = Math.max(1, Math.ceil(labelItems.length / 6));
+    const labelIndexes = new Set([0, labelItems.length - 1]);
+    for (let index = 0; index < labelItems.length; index += labelStep) labelIndexes.add(index);
     const xLabels = [...labelIndexes]
       .sort((left, right) => left - right)
-      .map((index) => `<text class="chart-axis-label" x="${xAt(index)}" y="${height - 14}" text-anchor="middle">${escapeHtml(trend[index].date.slice(5).replace('-', '/'))}</text>`)
+      .map((index) => `<text class="chart-axis-label" x="${labelItems[index].x}" y="${height - 14}" text-anchor="middle">${escapeHtml(labelItems[index].date.slice(5).replace('-', '/'))}</text>`)
       .join('');
     const averageLine = totals.averageOvertimeMinutes
       ? `<line class="chart-average" x1="${margin.left}" y1="${yAt(totals.averageOvertimeMinutes)}" x2="${plotRight}" y2="${yAt(totals.averageOvertimeMinutes)}"></line>
@@ -2620,15 +2634,7 @@
       : '';
     const candlestickPoints = plotted.map((item) => {
       const isPeak = peak && peak.overtimeMinutes > 0 && item.date === peak.date;
-      if (!item.available) {
-        const tooltip = `${item.date} ${item.weekday}\n${item.status}\n暂无完整上下班卡，未计入 K 线`;
-        return `<g class="chart-point gap" tabindex="0" focusable="true" role="img" aria-label="${escapeHtml(tooltip.replace(/\n/g, '，'))}" data-tooltip="${escapeHtml(tooltip)}" data-chart-x="${item.x.toFixed(2)}" data-chart-y="${plotBottom}">
-          <rect class="chart-hit" x="${(item.x - hitWidth / 2).toFixed(2)}" y="${margin.top}" width="${hitWidth.toFixed(2)}" height="${plotHeight}"></rect>
-          <rect class="chart-focus-ring" x="${(item.x - 9).toFixed(2)}" y="${plotBottom - 9}" width="18" height="18" rx="5"></rect>
-          <circle class="chart-gap-marker" cx="${item.x.toFixed(2)}" cy="${plotBottom}" r="4"></circle>
-          <title>${escapeHtml(tooltip.replace(/\n/g, '；'))}</title>
-        </g>`;
-      }
+      if (!item.available) return '';
       const comparison = item.comparisonDate
         ? `前一有效日 ${item.comparisonDate.slice(5).replace('-', '/')}：${item.openMinutes ? minutesToDuration(item.openMinutes) : '无'}`
         : `比较基线：首个有效日（${item.openMinutes ? minutesToDuration(item.openMinutes) : '无'}）`;
@@ -2664,7 +2670,17 @@
         <title>${escapeHtml(tooltip.replace(/\n/g, '；'))}</title>
       </g>`;
     }).join('');
-    const linePoints = plotted.map((item) => {
+    const candleConnectors = [];
+    let previousAvailable = null;
+    plotted.forEach((item, index) => {
+      if (!item.available) return;
+      if (previousAvailable) {
+        const throughGap = index - previousAvailable.index > 1;
+        candleConnectors.push(`<path class="chart-candle-connector${throughGap ? ' through-gap' : ''}" d="M ${(previousAvailable.item.x + candleWidth / 2).toFixed(2)} ${previousAvailable.item.closeY.toFixed(2)} L ${(item.x - candleWidth / 2).toFixed(2)} ${item.openY.toFixed(2)}" aria-hidden="true"></path>`);
+      }
+      previousAvailable = { item, index };
+    });
+    const linePoints = isCandlestick ? '' : plotted.map((item) => {
       const isPeak = peak && peak.overtimeMinutes > 0 && item.date === peak.date;
       const tooltip = item.available
         ? `${item.date} ${item.weekday}\n加班：${item.overtimeMinutes ? minutesToDuration(item.overtimeMinutes) : '无'}\n有效工时：${minutesToDuration(item.workMinutes)}`
@@ -2697,11 +2713,11 @@
       return `<li>${escapeHtml(`${item.date}，当日加班 ${item.closeMinutes ? minutesToDuration(item.closeMinutes) : '无'}，${comparison}`)}</li>`;
     }).join('');
     const description = isCandlestick
-      ? `按工作日展示每日加班 K 线。开盘值为前一有效出勤日加班时长，收盘值为当日加班时长；绿色空心和上箭头表示增加，红色实心和下箭头表示减少，灰色横线表示持平。${available.length} 个日期有完整打卡，${gaps.length} 个日期暂无可计算数据。${peakText}。`
+      ? `按工作日展示每日加班 K 线。开盘值为前一有效出勤日加班时长，收盘值为当日加班时长；绿色空心和上箭头表示增加，红色实心和下箭头表示减少，灰色横线表示持平。相邻 K 线使用连接线衔接，跨缺卡日期时连接线为虚线。${available.length} 个日期有完整打卡，${gaps.length} 个日期暂无可计算数据。${peakText}。`
       : `按工作日展示每日加班时长趋势，折线在缺少完整上下班卡的日期断开。${available.length} 个日期有完整打卡，${gaps.length} 个日期暂无可计算数据。${peakText}。`;
     const chartTitle = isCandlestick ? '每日加班 K 线' : '每日加班趋势图';
     const chartLayers = isCandlestick
-      ? `${averageLine}${candlestickPoints}`
+      ? `${averageLine}${candleConnectors.join('')}${candlestickPoints}`
       : `${areaPaths}${averageLine}${linePaths}${linePoints}`;
     const chartDefs = isCandlestick
       ? ''
