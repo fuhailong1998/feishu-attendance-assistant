@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         飞书假勤消息考勤汇总
 // @namespace    https://github.com/fuhailong1998/feishu-attendance-assistant
-// @version      1.0.0
+// @version      1.0.1
 // @description  跨会话缓存飞书「假勤」记录，统计异常、工时、加班趋势并导出 CSV
 // @author       fuhailong1998
 // @homepageURL  https://github.com/fuhailong1998/feishu-attendance-assistant
@@ -541,6 +541,8 @@
     const referenceDate = parseLocalDate(contextDate) || new Date();
     // 封账/封存提醒只用于发现统计周期，不能因包含“请假、出差”等申请词而计入某一天。
     if (extractAttendanceCycle(normalized, referenceDate)) return null;
+    // 打卡提醒描述的是未来动作，即使正文出现“迟到、早退、打卡成功”等词也不是考勤结果。
+    if (/(?:打卡提醒|attendance reminder|(?:clock|check)[ -]?(?:in|out)\s+reminder)/i.test(normalized)) return null;
     let date = options.dateResolved
       ? (extractReferencedAttendanceDate(normalized, referenceDate) || contextDate || null)
       : (extractDateFromText(normalized, referenceDate) || contextDate || null);

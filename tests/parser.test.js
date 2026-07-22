@@ -52,6 +52,32 @@ const baseConfig = {
 }
 
 {
+  const reminders = [
+    '08:22\n上班打卡提醒\n快到上班时间了，别忘了打卡哦~\n去打卡',
+    '08:22\n上班打卡提醒\n再不打卡就要迟到了，快去打卡吧~\n去打卡',
+    '17:55\n下班打卡提醒\n再不打卡就要早退了，完成打卡后可忽略本提醒',
+  ];
+  for (const text of reminders) {
+    assert.equal(
+      api.parseAttendanceMessage(text, '2026-07-01', baseConfig, { dateResolved: true }),
+      null,
+      '打卡提醒整张卡片不能生成时间或异常状态',
+    );
+  }
+}
+
+{
+  const event = api.parseAttendanceMessage(
+    '08:22\n上班打卡成功!\n打卡方式：通过考勤机打卡\n查看详情',
+    '2026-07-01',
+    baseConfig,
+    { dateResolved: true },
+  );
+  assert.deepEqual(Array.from(event.inTimes), ['08:22'], '实际打卡成功消息仍应正常解析');
+  assert.equal(event.flags.late, false);
+}
+
+{
   const event = api.parseAttendanceMessage(
     '上班打卡成功，班次 09:00-18:00，实际打卡时间 09:06',
     '2026-07-01',
