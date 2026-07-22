@@ -84,6 +84,9 @@ def run() -> dict:
             "trendFlat": host.locator(".chart-point.flat").count(),
             "trendDownStroke": host.locator(".chart-point.down .chart-candle-wick").evaluate("element => getComputedStyle(element).stroke"),
             "trendDownFill": host.locator(".chart-point.down .chart-candle-body").evaluate("element => getComputedStyle(element).fill"),
+            "chartMode": host.locator(".trend-card").get_attribute("data-active-chart-mode"),
+            "candlestickPressed": host.locator("[data-chart-mode='candlestick']").get_attribute("aria-pressed"),
+            "linePressed": host.locator("[data-chart-mode='line']").get_attribute("aria-pressed"),
         }
         assert desktop["panel"]["scrollWidth"] == desktop["panel"]["clientWidth"]
         assert desktop["main"]["scrollWidth"] == desktop["main"]["clientWidth"]
@@ -101,6 +104,9 @@ def run() -> dict:
         assert desktop["trendFlat"] == 1
         assert desktop["trendDownStroke"] == "rgb(180, 35, 24)"
         assert desktop["trendDownFill"] == "rgb(240, 68, 56)"
+        assert desktop["chartMode"] == "candlestick"
+        assert desktop["candlestickPressed"] == "true"
+        assert desktop["linePressed"] == "false"
         host.locator(".chart-point").first.focus()
         tooltip = host.locator("#overtimeTooltip")
         assert tooltip.evaluate("element => element.classList.contains('open')")
@@ -111,10 +117,32 @@ def run() -> dict:
         assert "▼ 减少" in tooltip.inner_text()
         panel.focus()
         assert not tooltip.evaluate("element => element.classList.contains('open')")
+
+        host.locator("[data-chart-mode='line']").click()
+        assert host.locator(".trend-card").get_attribute("data-active-chart-mode") == "line"
+        assert host.locator("#overtimeTrendHeading").inner_text() == "加班趋势"
+        assert host.locator("[data-chart-mode='line']").get_attribute("aria-pressed") == "true"
+        assert host.locator("[data-chart-mode='candlestick']").get_attribute("aria-pressed") == "false"
+        assert host.locator(".chart-line").count() >= 1
+        assert host.locator(".chart-area").count() >= 1
+        assert host.locator(".chart-point.line-point").count() == 2
+        assert host.locator(".chart-candle-body, .chart-candle-doji").count() == 0
+        host.locator(".trend-card").screenshot(path="/tmp/attendance-browser-line.png")
+        host.locator(".chart-point.line-point").first.focus()
+        assert "加班：0小时4分" in tooltip.inner_text()
+        panel.focus()
+
         host.locator("#toggleOrder").click()
         assert host.locator("#orderLabel").inner_text() == "最早在前"
         assert host.locator("tbody tr td strong").first.inner_text() == "2026-07-01"
+        assert host.locator(".trend-card").get_attribute("data-active-chart-mode") == "line", "重绘后应保持当前图表模式"
         host.locator("#toggleOrder").click()
+
+        host.locator("[data-chart-mode='candlestick']").focus()
+        page.keyboard.press("Enter")
+        assert host.locator(".trend-card").get_attribute("data-active-chart-mode") == "candlestick"
+        assert host.locator("#overtimeTrendHeading").inner_text() == "加班 K 线"
+        assert host.locator("[data-chart-mode='candlestick']").get_attribute("aria-pressed") == "true"
         page.screenshot(path="/tmp/attendance-browser-desktop.png")
 
         cache_context = browser.new_context(viewport={"width": 1100, "height": 850})
@@ -172,6 +200,7 @@ def run() -> dict:
             "dateInput": host.locator("#rangeStart").bounding_box(),
             "closeButton": host.locator("#close").bounding_box(),
             "trendScroll": dimensions(host.locator(".trend-scroll")),
+            "chartModeButton": host.locator("[data-chart-mode='candlestick']").bounding_box(),
         }
         viewport_width = mobile["viewport"]["width"]
         assert viewport_width - 20 <= mobile["panel"]["clientWidth"] <= viewport_width
@@ -182,6 +211,7 @@ def run() -> dict:
         assert mobile["primaryButton"]["height"] >= 44
         assert mobile["dateInput"]["height"] >= 44
         assert mobile["closeButton"] and mobile["closeButton"]["width"] >= 44
+        assert mobile["chartModeButton"] and mobile["chartModeButton"]["height"] >= 36
         assert mobile["trendScroll"]["scrollWidth"] > mobile["trendScroll"]["clientWidth"]
         host.locator(".trend-card").scroll_into_view_if_needed()
         page.wait_for_timeout(80)
@@ -449,6 +479,7 @@ def run() -> dict:
                 "/tmp/attendance-browser-manual.png",
                 "/tmp/attendance-browser-cross-chat-cache.png",
                 "/tmp/attendance-browser-kline-up.png",
+                "/tmp/attendance-browser-line.png",
             ],
         }
 
