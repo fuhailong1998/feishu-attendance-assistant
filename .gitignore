@@ -1,6 +1,7 @@
 .codex/
 .codegraph/
 .DS_Store
+.attendance-data/
 __pycache__/
 *.py[cod]
 .pytest_cache/

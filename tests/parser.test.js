@@ -163,6 +163,47 @@ const baseConfig = {
   );
   assert.equal(noRecord.date, '2026-06-30', '缺卡通知应归属机器人明确写出的考勤日期，而不是通知发送日');
   assert.equal(noRecord.flags.missingIn, true);
+  assert.deepEqual(Array.from(noRecord.inTimes), [], '缺卡通知里的 08:30 是缺失班次时间，不是实际上班卡');
+  assert.deepEqual(Array.from(noRecord.outTimes), [], '缺卡通知不能凭正文计划时间生成下班卡');
+}
+
+{
+  const noRecord = api.parseAttendanceMessage(
+    '最近缺卡记录：07-14 08:30上班卡\n本月缺卡累计：共1次\n缺卡提醒\nNo record notification',
+    '2026-07-15',
+    baseConfig,
+    { dateResolved: true },
+  );
+  assert.equal(noRecord.date, '2026-07-14');
+  assert.equal(noRecord.flags.missingIn, true);
+  assert.deepEqual(Array.from(noRecord.inTimes), []);
+  assert.deepEqual(Array.from(noRecord.outTimes), []);
+}
+
+{
+  const missingConfig = { ...baseConfig, rangeStart: '2026-07-14', rangeEnd: '2026-07-14' };
+  const events = [
+    api.parseAttendanceMessage(
+      '最近缺卡记录：07-14 08:30上班卡\n缺卡提醒\nNo record notification',
+      '2026-07-15',
+      missingConfig,
+      { dateResolved: true },
+    ),
+    api.parseAttendanceMessage(
+      '20:30\n下班打卡成功!\n打卡方式：通过考勤机打卡',
+      '2026-07-14',
+      missingConfig,
+      { dateResolved: true },
+    ),
+  ];
+  const result = api.buildDailySummary(events, missingConfig, new Date(2026, 6, 15, 12, 0));
+  assert.equal(result.rows[0].clockIn, '—');
+  assert.equal(result.rows[0].clockOut, '20:30');
+  assert.match(result.rows[0].status, /缺上班卡/);
+  assert.equal(result.rows[0].workMinutes, null, '缺少实际上班卡时不能推算完整工时');
+  assert.equal(result.rows[0].overtimeMinutes, 0, '缺少实际上班卡时不能统计加班');
+  assert.equal(result.totals.completeWorkDays, 0);
+  assert.equal(result.totals.overtimeMinutes, 0);
 }
 
 {

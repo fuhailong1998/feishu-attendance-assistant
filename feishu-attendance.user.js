@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         飞书假勤消息考勤汇总
 // @namespace    https://github.com/fuhailong1998/feishu-attendance-assistant
-// @version      1.0.3
+// @version      1.0.4
 // @description  跨会话缓存飞书「假勤」记录，统计异常、工时、加班趋势并导出 CSV
 // @author       fuhailong1998
 // @homepageURL  https://github.com/fuhailong1998/feishu-attendance-assistant
@@ -558,8 +558,8 @@
     const flags = emptyFlags();
     flags.late = /(?:严重迟到|迟到|晚到|\blate\b)/i.test(normalized);
     flags.early = /(?:早退|left\s+early|early\s+(?:leave|departure))/i.test(normalized);
-    flags.missingIn = /(?:上班|签到|到岗)[^\n。；]{0,12}(?:缺卡|漏卡|未打卡)|(?:缺卡|漏卡|未打卡)[^\n。；]{0,12}(?:上班|签到|到岗)|(?:clock|check)[ -]?in[^\n.;]{0,18}(?:missing|no record)|(?:missing|no record)[^\n.;]{0,18}(?:clock|check)[ -]?in/i.test(normalized);
-    flags.missingOut = /(?:下班|签退|离岗)[^\n。；]{0,12}(?:缺卡|漏卡|未打卡)|(?:缺卡|漏卡|未打卡)[^\n。；]{0,12}(?:下班|签退|离岗)|(?:clock|check)[ -]?out[^\n.;]{0,18}(?:missing|no record)|(?:missing|no record)[^\n.;]{0,18}(?:clock|check)[ -]?out/i.test(normalized);
+    flags.missingIn = /(?:上班|签到|到岗)[^\n。；]{0,12}(?:缺卡|漏卡|未打卡)|(?:缺卡|漏卡|未打卡)[^\n。；]{0,12}(?:上班|签到|到岗)|(?:缺卡|漏卡)记录[^\n。；]{0,48}(?:上班卡|签到|到岗)|(?:clock|check)[ -]?in[^\n.;]{0,18}(?:missing|no record)|(?:missing|no record)[^\n.;]{0,18}(?:clock|check)[ -]?in/i.test(normalized);
+    flags.missingOut = /(?:下班|签退|离岗)[^\n。；]{0,12}(?:缺卡|漏卡|未打卡)|(?:缺卡|漏卡|未打卡)[^\n。；]{0,12}(?:下班|签退|离岗)|(?:缺卡|漏卡)记录[^\n。；]{0,48}(?:下班卡|签退|离岗)|(?:clock|check)[ -]?out[^\n.;]{0,18}(?:missing|no record)|(?:missing|no record)[^\n.;]{0,18}(?:clock|check)[ -]?out/i.test(normalized);
     flags.missing = /(?:缺卡|漏卡|未打卡|missing punch|no record)/i.test(normalized) && !flags.missingIn && !flags.missingOut;
     flags.absent = /(?:旷工|缺勤|\babsent\b)/i.test(normalized);
     flags.field = /(?:外勤|offsite|field work)/i.test(normalized);
@@ -570,8 +570,10 @@
     flags.normal = /(?:打卡正常|考勤正常|状态[:：]?\s*正常|正常打卡|attendance\s+normal|status[:：]?\s*normal)/i.test(normalized);
 
     const isReminder = /(?:打卡提醒|提醒你|记得打卡|别忘|请及时打卡|该打卡了|attendance reminder|remember to (?:clock|check)|requests closing soon)/i.test(normalized);
+    // 缺卡通知里的时间表示“本应打但没有打”的班次时间，不是实际打卡时间。
+    const isMissingNotification = /(?:缺卡提醒|缺卡通知|漏卡提醒|no record notification|missing punch notification)/i.test(normalized);
     const hasActualEvidence = /(?:打卡成功|(?:^|[^应])打卡时间|实际打卡|已打卡|已于[^\n]{0,18}打卡|完成[^\n]{0,8}打卡|签到成功|签退成功|考勤结果|clocked\s+(?:in|out)\s+successfully|checked[ -]?(?:in|out)\s+successfully)/i.test(normalized);
-    const candidates = extractClockCandidates(normalized).filter((candidate) => {
+    const candidates = (isMissingNotification ? [] : extractClockCandidates(normalized)).filter((candidate) => {
       if (candidate.planned) return false;
       if (isReminder && !hasActualEvidence) return false;
       return true;
