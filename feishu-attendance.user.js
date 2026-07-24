@@ -47,6 +47,7 @@
   const LUNCH_START_MINUTES = 12 * 60;
   const LUNCH_END_MINUTES = 13 * 60 + 30;
   const FULL_DAY_LEAVE_WORK_MINUTES = 8 * 60;
+  const HALF_DAY_LEAVE_CREDIT_MINUTES = 4 * 60;
   const OFFICIAL_CALENDAR_VERSION = 'CN-2026';
   const CHINA_MAINLAND_2026_HOLIDAY_DATES = Object.freeze([
     '2026-01-01', '2026-01-02', '2026-01-03',
@@ -336,6 +337,7 @@
       ? value.type
       : (clockIn || clockOut ? 'patch' : '');
     if (!type) return null;
+    const isHalfLeave = type === 'leave-am' || type === 'leave-pm';
     const cutoff = timeToMinutes(DEFAULT_CONFIG.overnightClockOutCutoff);
     const clockOutNextDay = Boolean(value.clockOutNextDay)
       && Boolean(clockOut)
@@ -346,6 +348,7 @@
       clockIn,
       clockOut,
       clockOutNextDay,
+      ...(isHalfLeave ? { includeInAverage: value.includeInAverage !== false } : {}),
       note: String(value.note || '').trim().slice(0, 300),
       updatedAt: String(value.updatedAt || ''),
     };
@@ -372,6 +375,9 @@
       } else if (adjustment.type !== 'patch' || current.type === 'patch') {
         type = adjustment.type;
       }
+      const selectedHalfLeave = adjustment.type === type
+        ? adjustment
+        : (current.type === type ? current : null);
       merged.set(adjustment.date, normalizeManualAdjustment({
         date: adjustment.date,
         type,
@@ -380,6 +386,7 @@
         clockOutNextDay: adjustment.clockOut
           ? adjustment.clockOutNextDay
           : current.clockOutNextDay,
+        includeInAverage: selectedHalfLeave?.includeInAverage,
         note: adjustment.note || current.note,
         updatedAt: adjustment.updatedAt || current.updatedAt,
       }));
@@ -783,8 +790,13 @@
       overtimeDays: 0,
       workMinutes: 0,
       completeWorkDays: 0,
+      averageAttendanceDays: 0,
       fullLeaveWorkDays: 0,
+      halfLeaveWorkDays: 0,
+      excludedHalfLeaveDays: 0,
+      halfLeaveCreditMinutes: 0,
       travelWorkDays: 0,
+      restDayOvertimeDays: 0,
       averageWorkDays: 0,
       averageOvertimeMinutes: 0,
       averageWorkMinutes: 0,
@@ -966,12 +978,15 @@
       let workMinutes = null;
       let overtimeMinutes = 0;
       let completeAttendance = false;
+      let averageWorkContributionMinutes = null;
+      let halfLeaveWorkCredit = false;
+      let restDayOvertime = false;
       if (clockIn && clockOut) {
         const clockInMinutes = timeToMinutes(clockIn);
         let clockOutMinutes = timeToMinutes(clockOut);
         if (clockOutMinutes < clockInMinutes) clockOutMinutes += 24 * 60;
         durationMinutes = clockOutMinutes - clockInMinutes;
-        const eligibleForWorkStats = (workday || isHalfLeave)
+        const eligibleForWorkStats = workday
           && !isManualFullLeave
           && !flags.leave
           && !flags.travel
@@ -985,27 +1000,52 @@
             : 0;
           overtimeMinutes = Math.max(0, clockOutMinutes - schedule.overtimeAfter);
           workMinutes = normalWorkedMinutes + overtimeMinutes;
-          totals.workMinutes += workMinutes;
           totals.completeWorkDays += 1;
           completeAttendance = true;
           totals.overtimeMinutes += overtimeMinutes;
           if (overtimeMinutes > 0) totals.overtimeDays += 1;
+          const includeInAverage = !isHalfLeave || manual?.includeInAverage !== false;
+          if (includeInAverage) {
+            halfLeaveWorkCredit = isHalfLeave;
+            averageWorkContributionMinutes = workMinutes
+              + (halfLeaveWorkCredit ? HALF_DAY_LEAVE_CREDIT_MINUTES : 0);
+            totals.workMinutes += averageWorkContributionMinutes;
+            totals.averageAttendanceDays += 1;
+            if (halfLeaveWorkCredit) {
+              totals.halfLeaveWorkDays += 1;
+              totals.halfLeaveCreditMinutes += HALF_DAY_LEAVE_CREDIT_MINUTES;
+            }
+          } else if (isHalfLeave) {
+            totals.excludedHalfLeaveDays += 1;
+          }
+        } else if (
+          !workday
+          && !isFuture
+          && !isHalfLeave
+          && !isManualFullLeave
+          && !flags.leave
+          && !flags.travel
+          && durationMinutes > 0
+        ) {
+          restDayOvertime = true;
+          totals.restDayOvertimeDays += 1;
         }
       }
-      const fullLeaveWorkCredit = workday
+      const fullLeaveWorkDay = workday
         && !isFuture
         && (isManualFullLeave || flags.leave);
-      if (fullLeaveWorkCredit) {
-        workMinutes = FULL_DAY_LEAVE_WORK_MINUTES;
-        totals.workMinutes += FULL_DAY_LEAVE_WORK_MINUTES;
+      if (fullLeaveWorkDay) {
+        workMinutes = null;
         totals.fullLeaveWorkDays += 1;
       }
+      const fullLeaveWorkCredit = false;
       const travelWorkCredit = workday
         && !isFuture
         && flags.travel;
       if (travelWorkCredit) {
         workMinutes = FULL_DAY_LEAVE_WORK_MINUTES;
-        totals.workMinutes += FULL_DAY_LEAVE_WORK_MINUTES;
+        averageWorkContributionMinutes = FULL_DAY_LEAVE_WORK_MINUTES;
+        totals.workMinutes += averageWorkContributionMinutes;
         totals.travelWorkDays += 1;
       }
       if (abnormal) totals.abnormal += 1;
@@ -1027,8 +1067,12 @@
         workMinutes,
         overtimeMinutes,
         completeAttendance,
+        averageWorkContributionMinutes,
+        averageWorkIncluded: Number.isFinite(averageWorkContributionMinutes),
+        halfLeaveWorkCredit,
         fullLeaveWorkCredit,
         travelWorkCredit,
+        restDayOvertime,
         status: [...new Set(labels)].join('、'),
         abnormal,
         pending,
@@ -1038,9 +1082,7 @@
         evidence: [...new Set(day.evidence)],
       });
     }
-    totals.averageWorkDays = totals.completeWorkDays
-      + totals.fullLeaveWorkDays
-      + totals.travelWorkDays;
+    totals.averageWorkDays = totals.averageAttendanceDays + totals.travelWorkDays;
     totals.averageOvertimeMinutes = totals.completeWorkDays
       ? Math.round(totals.overtimeMinutes / totals.completeWorkDays)
       : 0;
@@ -1968,7 +2010,7 @@
       .cache-pill { padding: 5px 8px; border: 1px solid #dce6ff; border-radius: 999px; color: #315bc7; background: #edf3ff; font-size: 10px; font-weight: 650; }
       .cache-pill.warning { border-color: #f5dcae; color: var(--fa-warning); background: var(--fa-warning-soft); }
       .summary { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
-      .work-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 8px; }
+      .work-summary { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 8px; }
       .metric { position: relative; min-height: 88px; padding: 12px; overflow: hidden; border: 1px solid var(--fa-border); border-radius: 13px; background: #fff; }
       .metric::after { content: ""; position: absolute; right: -18px; top: -22px; width: 62px; height: 62px; border-radius: 50%; background: var(--metric-soft, #f1f4f8); }
       .metric-label { position: relative; z-index: 1; display: flex; align-items: center; gap: 6px; color: var(--fa-muted); font-size: 10px; }
@@ -2084,6 +2126,7 @@
       .manual-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
       .manual-grid .full { grid-column: 1 / -1; }
       .manual-next-day { margin-top: 2px; }
+      .manual-grid .check-option[hidden] { display: none; }
       .manual-hint { margin: 13px 0 0; padding: 10px 12px; border: 1px solid #dce6ff; border-radius: 10px; color: #3c5892; background: #f4f7ff; font-size: 11px; line-height: 1.6; }
       .manual-hint[data-tone="warning"] { border-color: #f5dcae; color: var(--fa-warning); background: var(--fa-warning-soft); }
       .manual-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 13px 18px; border-top: 1px solid var(--fa-border); background: #fafbfc; }
@@ -2290,14 +2333,15 @@
           <section class="calculation-policy" aria-labelledby="calculationPolicyTitle">
             <h4 id="calculationPolicyTitle">统一计算口径</h4>
             <ul>
-              <li>完整出勤日必须同时有上班卡和下班卡；普通休息日和法定节假日即使存在打卡，也只保留明细，不计入“有记录”、工时、加班或平均值。</li>
+              <li>完整出勤日必须同时有上班卡和下班卡；普通休息日和法定节假日即使存在打卡，也不计入“有记录”、工时或平均值；上下班卡完整时另计 1 个周末/节假日加班日。</li>
               <li>有效工时为正常时段实际工作分钟数（扣除 12:00–13:30 午休）加应下班后的加班分钟数。</li>
               <li>加班为实际下班晚于当前班次应下班时间的部分；完整出勤但加班为 0 的日期仍进入平均加班分母。</li>
               <li><strong>平均加班 = 加班总时长 ÷ 全部完整出勤日</strong>，结果四舍五入到分钟。</li>
-              <li>全天请假和工作日出差均固定计入 8 小时工时，不计加班，也不进入完整出勤日数量。</li>
-              <li><strong>平均工时 =（完整出勤有效工时 + 全天请假/工作日出差 8 小时）÷（完整出勤日 + 全天请假日 + 工作日出差日）</strong>；周末出差、普通休息日和法定节假日不参与平均值计算。</li>
+              <li>全天请假不进入平均工时分子或分母；工作日出差按 8 小时计入平均工时，周末出差不计入。</li>
+              <li>半天假默认纳入平均工时，当天按“4 小时请假额度 + 实际半天有效工时”计算；可在补充窗口取消勾选。</li>
+              <li><strong>平均工时 = 计入均值的工时总计 ÷ 计入均值日</strong>；普通休息日和法定节假日不参与平均值计算。</li>
               <li>补卡、半天假、出差和外勤会覆盖对应机器人异常后，使用相同规则重新计算。</li>
-              <li>未来日期不参与汇总；额外工作日优先于配置的节假日，休息日和法定节假日不统计工时与加班。</li>
+              <li>未来日期不参与汇总；额外工作日优先于配置的节假日；周末/节假日加班天数只认完整上下班卡，不计算加班时长。</li>
             </ul>
           </section>
         </main>
@@ -2323,6 +2367,7 @@
             <label>上班时间（可选）<input id="manualClockIn" type="time"></label>
             <label>下班时间（可选）<input id="manualClockOut" type="time"></label>
             <label class="check-option manual-next-day full"><input id="manualClockOutNextDay" type="checkbox"> 下班卡发生在次日 00:00–05:59</label>
+            <label class="check-option full" id="manualHalfAverageField" hidden><input id="manualIncludeInAverage" type="checkbox" checked> <span>纳入平均工时（4 小时请假额度 + 实际半天工时）</span></label>
             <label class="full">说明（可选）<textarea id="manualNote" maxlength="300" rows="3" placeholder="例如：补卡审批已通过、年假半天"></textarea></label>
           </div>
           <p class="manual-hint" id="manualHint" role="status" aria-live="polite"></p>
@@ -2348,10 +2393,10 @@
 
   function manualRuleText(type) {
     const rules = {
-      holiday: '法定节假日不计应出勤、工时或加班，也不进入平均加班和平均工时的分母。',
-      'leave-full': '全天请假按 8 小时计入平均工时；已解析的机器人异常会由此补充说明覆盖。',
-      'leave-am': '上午半天假：14:00–15:00 上班，联动 18:00–19:00 下班，净出勤需满 4 小时。',
-      'leave-pm': '下午半天假：08:30–09:30 上班，联动 14:00–15:00 下班；12:00–13:30 午休不计工时，净出勤需满 4 小时。',
+      holiday: '法定节假日不计应出勤、工时或平均值；上下班卡完整时另计 1 个节假日加班日。',
+      'leave-full': '全天请假会覆盖已解析的机器人异常，但不进入平均工时的分子或分母。',
+      'leave-am': '上午半天假：14:00–15:00 上班，联动 18:00–19:00 下班。',
+      'leave-pm': '下午半天假：08:30–09:30 上班，联动 14:00–15:00 下班；12:00–13:30 午休不计工时。',
       patch: '补录的上班或下班时间会覆盖机器人当天对应一侧的打卡，并重新判断迟到、早退和工时。',
       travel: '工作日出差固定按 8 小时计入平均工时；周末出差只保留明细，不进入平均值分母。',
       field: '外出/外勤会标记为有效状态；如填写打卡，也会计算有效工时和加班。',
@@ -2362,6 +2407,8 @@
 
   function updateManualHint() {
     const type = $('#manualType').value;
+    const isHalfLeave = type === 'leave-am' || type === 'leave-pm';
+    $('#manualHalfAverageField').hidden = !isHalfLeave;
     const clockIn = $('#manualClockIn').value;
     const clockOut = $('#manualClockOut').value;
     const outMinutes = timeToMinutes(clockOut);
@@ -2371,6 +2418,11 @@
     if (!nextDayEligible) $('#manualClockOutNextDay').checked = false;
 
     let text = manualRuleText(type);
+    if (isHalfLeave) {
+      text += $('#manualIncludeInAverage').checked
+        ? ' 当前已纳入平均工时，按“4 小时请假额度 + 实际半天有效工时”计算。'
+        : ' 当前不纳入平均工时，仅保留打卡、状态与加班统计。';
+    }
     let warning = false;
     const inMinutes = timeToMinutes(clockIn);
     if (inMinutes !== null && outMinutes !== null) {
@@ -2404,6 +2456,9 @@
     $('#manualClockIn').value = existing ? existing.clockIn : '';
     $('#manualClockOut').value = existing ? existing.clockOut : '';
     $('#manualClockOutNextDay').checked = Boolean(existing && existing.clockOutNextDay);
+    $('#manualIncludeInAverage').checked = existing
+      ? existing.includeInAverage !== false
+      : true;
     $('#manualNote').value = existing ? existing.note : '';
     $('#deleteManual').hidden = !existing;
     $('#manualError').textContent = '';
@@ -2425,6 +2480,7 @@
     const clockIn = $('#manualClockIn').value;
     const clockOut = $('#manualClockOut').value;
     const clockOutNextDay = $('#manualClockOutNextDay').checked;
+    const includeInAverage = $('#manualIncludeInAverage').checked;
     if (!parseLocalDate(date) || date < state.config.rangeStart || date > state.config.rangeEnd) {
       $('#manualError').textContent = `请选择 ${state.config.rangeStart} 至 ${state.config.rangeEnd} 内的日期。`;
       return;
@@ -2450,6 +2506,7 @@
       clockIn,
       clockOut,
       clockOutNextDay,
+      includeInAverage,
       note: $('#manualNote').value,
       updatedAt: new Date().toISOString(),
     });
@@ -2926,10 +2983,11 @@
         <div class="summary work-summary">
           ${metricCard(minutesToDuration(totals.overtimeMinutes), '加班总时间', `${totals.overtimeDays} 个加班日`, totals.overtimeMinutes ? 'primary' : '')}
           ${metricCard(totals.overtimeDays, '加班天数', '下班晚于联动应下班', totals.overtimeDays ? 'primary' : '')}
+          ${metricCard(totals.restDayOvertimeDays, '周末/节假日加班', '完整上下班卡的天数', totals.restDayOvertimeDays ? 'primary' : '')}
           ${metricCard(minutesToDuration(totals.averageOvertimeMinutes), '平均加班时间', `${totals.completeWorkDays} 个完整出勤日（含 0 加班）`)}
-          ${metricCard(minutesToDuration(totals.averageWorkMinutes), '平均工作时间', `${totals.averageWorkDays} 个计入均值日${totals.fullLeaveWorkDays ? `，含 ${totals.fullLeaveWorkDays} 天全天假` : ''}${totals.travelWorkDays ? `，含 ${totals.travelWorkDays} 个工作日出差` : ''}`)}
+          ${metricCard(minutesToDuration(totals.averageWorkMinutes), '平均工作时间', `${totals.averageWorkDays} 个计入均值日${totals.halfLeaveWorkDays ? `，含 ${totals.halfLeaveWorkDays} 个半天假` : ''}${totals.travelWorkDays ? `，含 ${totals.travelWorkDays} 个工作日出差` : ''}`)}
         </div>
-        <p class="work-summary-note">平均加班按全部完整出勤日计算，0 加班日同样进入分母；平均工时纳入完整出勤有效工时，并将每个全天请假日和工作日出差按 8 小时计入；周末出差、普通休息日和法定节假日不参与平均值。</p>
+        <p class="work-summary-note">平均加班按全部完整出勤日计算，0 加班日同样进入分母；半天假默认以“4 小时请假额度 + 实际半天有效工时”纳入平均工时，可逐日取消；全天请假、周末出差、普通休息日和法定节假日不参与平均工时。周末/节假日上下班卡完整时只统计加班天数，不计入平均值。</p>
       </div>
       ${renderOvertimeTrend(result.rows, totals)}`;
     if (result.error) {
@@ -3039,7 +3097,7 @@
       `考勤周期：${state.config.rangeStart} 至 ${state.config.rangeEnd}`,
       `班次规则：${describeSchedule(state.config)}`,
       `应出勤 ${totals.workdays} 天；工作日有记录 ${totals.attended} 天；迟到 ${totals.late} 次；早退 ${totals.early} 次；缺卡 ${totals.missing} 次；待核对 ${totals.pending} 天。`,
-      `加班总计 ${minutesToDuration(totals.overtimeMinutes)}（${totals.overtimeDays} 天）；平均加班 ${minutesToDuration(totals.averageOvertimeMinutes)}；平均工作 ${minutesToDuration(totals.averageWorkMinutes)}。`,
+      `工作日加班总计 ${minutesToDuration(totals.overtimeMinutes)}（${totals.overtimeDays} 天）；周末/节假日加班 ${totals.restDayOvertimeDays} 天；平均加班 ${minutesToDuration(totals.averageOvertimeMinutes)}；平均工作 ${minutesToDuration(totals.averageWorkMinutes)}。`,
       manualRows.length ? `本地补充 ${manualRows.length} 天：${manualRows.map((row) => `${row.date} ${row.manualLabel}${row.manual.note ? `（${row.manual.note}）` : ''}`).join('；')}` : '本周期无本地考勤补充。',
       abnormalRows.length ? '异常/待核对明细：' : '未发现异常或待核对日期。',
       ...abnormalRows.map((row) => `${row.date} ${row.weekday}：${row.clockIn}–${row.clockOut}（应下班 ${row.expectedOut}，有效工时 ${row.workDuration}，加班 ${row.overtime}），${row.status}`),
@@ -3193,7 +3251,13 @@
     event.preventDefault();
     closeManualDialog();
   });
-  for (const input of [$('#manualType'), $('#manualClockIn'), $('#manualClockOut'), $('#manualClockOutNextDay')]) {
+  for (const input of [
+    $('#manualType'),
+    $('#manualClockIn'),
+    $('#manualClockOut'),
+    $('#manualClockOutNextDay'),
+    $('#manualIncludeInAverage'),
+  ]) {
     input.addEventListener('change', () => {
       $('#manualError').textContent = '';
       updateManualHint();

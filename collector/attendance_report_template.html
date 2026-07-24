@@ -309,18 +309,19 @@ __ATTENDANCE_REPORT_STYLES__
               <span class="rule-number">04</span>
               <h3>班次与半天假</h3>
               <p id="rule-schedule-detail"></p>
-              <p>上午半天假按 14:00–15:00 上班、18:00–19:00 联动下班；下午半天假按 08:30–09:30 上班、14:00–15:00 联动下班。</p>
+              <p>上午半天假按 14:00–15:00 上班、18:00–19:00 联动下班；下午半天假按 08:30–09:30 上班、14:00–15:00 联动下班。默认以“4 小时请假额度 + 实际半天有效工时”纳入平均工时，可逐日取消。</p>
             </article>
             <article class="rule-group">
               <span class="rule-number">05</span>
               <h3>有效工时与加班</h3>
-              <p>完整出勤日必须同时有上班卡和下班卡。有效工时为正常时段实际工作分钟数，扣除 12:00–13:30 午休，再加应下班时间后的加班；周末出差、普通休息日和法定节假日即使有打卡，也只保留明细，不计入“有记录”、工时、加班或平均值。</p>
+              <p>完整出勤日必须同时有上班卡和下班卡。有效工时为正常时段实际工作分钟数，扣除 12:00–13:30 午休，再加应下班时间后的加班；周末出差、普通休息日和法定节假日不计入“有记录”、工时或平均值。</p>
               <p>加班 = max（0，实际下班 − 当前班次应下班时间）。</p>
+              <p>普通休息日或法定节假日同时有上班卡和下班卡时，另计 1 个周末/节假日加班日，不计算加班时长。</p>
             </article>
             <article class="rule-group">
               <span class="rule-number">06</span>
               <h3>请假与人工补充</h3>
-              <p>全天请假和工作日出差固定计入 8 小时工时，不计加班，也不属于完整出勤日；完整打卡的半天假按对应 4 小时班次计算。人工标记的法定节假日会覆盖当天异常。</p>
+              <p>全天请假不进入平均工时的分子或分母；工作日出差固定按 8 小时计入，周末出差不计入。完整打卡的半天假由逐日开关决定是否纳入。人工标记的法定节假日会覆盖当天异常。</p>
               <p id="rule-missing-detail"></p>
             </article>
             <article class="rule-group rule-group-average">
@@ -328,7 +329,7 @@ __ATTENDANCE_REPORT_STYLES__
               <h3>平均值与舍入</h3>
               <p><strong>平均加班 = 加班总时长 ÷ 全部完整出勤日</strong>，0 加班日同样进入分母；全天请假和法定节假日不进入该分母。</p>
               <p id="rule-overtime-current"></p>
-              <p><strong>平均工时 =（完整出勤有效工时 + 全天请假/工作日出差 × 8 小时）÷（完整出勤日 + 全天请假日 + 工作日出差日）</strong>；周末出差、普通休息日和法定节假日不参与计算。</p>
+              <p><strong>平均工时 = 计入均值的工时总计 ÷ 计入均值日</strong>；计入的半天假按 4 小时请假额度加实际半天有效工时，工作日出差按 8 小时；全天请假、周末出差、普通休息日和法定节假日不参与计算。</p>
               <p id="rule-work-current"></p>
               <p>所有平均值最终四舍五入到分钟。</p>
             </article>
@@ -377,7 +378,13 @@ __ATTENDANCE_REPORT_STYLES__
             <span>查看当天识别依据</span>
             <span id="reconcile-evidence-count">0 条</span>
           </summary>
-          <div class="reconcile-evidence-list" id="reconcile-evidence-list"></div>
+          <div
+            class="reconcile-evidence-list"
+            id="reconcile-evidence-list"
+            role="region"
+            aria-label="当天来源消息"
+            tabindex="-1"
+          ></div>
         </details>
         <div class="reconcile-grid">
           <label class="full-field">
@@ -405,6 +412,10 @@ __ATTENDANCE_REPORT_STYLES__
           <label class="check-field full-field">
             <input id="reconcile-next-day" type="checkbox">
             <span>下班卡发生在次日 00:00–05:59</span>
+          </label>
+          <label class="check-field full-field" id="reconcile-half-average-field" hidden>
+            <input id="reconcile-include-average" type="checkbox" checked>
+            <span>纳入平均工时（4 小时请假额度 + 实际半天工时）</span>
           </label>
           <label class="full-field">
             <span>核对说明（可选）</span>

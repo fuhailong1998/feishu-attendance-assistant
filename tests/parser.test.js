@@ -351,9 +351,11 @@ const baseConfig = {
   assert.equal(may29.status, '正常');
   assert.equal(may30.clockOut, '22:00');
   assert.equal(may30.status, '休息日打卡');
+  assert.equal(may30.restDayOvertime, true);
   assert.equal(result.totals.attended, 2, '普通休息日打卡不能计入“有记录”');
   assert.equal(result.totals.rest, 1);
   assert.equal(result.totals.completeWorkDays, 2);
+  assert.equal(result.totals.restDayOvertimeDays, 1);
 
   const april18Config = { ...overnightConfig, rangeStart: '2026-04-18', rangeEnd: '2026-04-18' };
   const april18 = api.buildDailySummary([
@@ -479,6 +481,20 @@ const baseConfig = {
     false,
     '次日下班手工标记同样只允许到 05:59',
   );
+  assert.equal(
+    api.normalizeManualAdjustment({ date: '2026-07-06', type: 'leave-am' }).includeInAverage,
+    true,
+    '半天假默认纳入平均工时',
+  );
+  assert.equal(
+    api.normalizeManualAdjustment({
+      date: '2026-07-06',
+      type: 'leave-pm',
+      includeInAverage: false,
+    }).includeInAverage,
+    false,
+    '半天假应保留逐日取消纳入平均工时的设置',
+  );
 }
 
 {
@@ -523,29 +539,37 @@ const baseConfig = {
   assert.equal(morningLeave.expectedOut, '18:30');
   assert.equal(morningLeave.workDuration, '5小时30分');
   assert.equal(morningLeave.overtime, '1小时30分');
+  assert.equal(morningLeave.averageWorkContributionMinutes, 9 * 60 + 30);
+  assert.equal(morningLeave.halfLeaveWorkCredit, true);
   assert.match(morningLeave.status, /上午半天假/);
   assert.match(morningLeave.status, /半天出勤正常/);
 
   assert.equal(afternoonLeave.expectedOut, '14:30');
   assert.equal(afternoonLeave.workDuration, '5小时');
   assert.equal(afternoonLeave.overtime, '1小时');
+  assert.equal(afternoonLeave.averageWorkContributionMinutes, 9 * 60);
+  assert.equal(afternoonLeave.halfLeaveWorkCredit, true);
   assert.match(afternoonLeave.status, /下午半天假/);
   assert.match(afternoonLeave.status, /半天出勤正常/);
 
   assert.equal(fullLeave.status, '全天请假');
-  assert.equal(fullLeave.workDuration, '8小时');
-  assert.equal(fullLeave.workMinutes, 8 * 60);
+  assert.equal(fullLeave.workDuration, '—');
+  assert.equal(fullLeave.workMinutes, null);
   assert.equal(fullLeave.completeAttendance, false);
-  assert.equal(fullLeave.fullLeaveWorkCredit, true);
+  assert.equal(fullLeave.fullLeaveWorkCredit, false);
+  assert.equal(fullLeave.averageWorkIncluded, false);
   assert.equal(result.totals.leave, 2, '全天假计 1 天，两个半天各计 0.5 天');
   assert.equal(result.totals.overtimeMinutes, 4 * 60);
   assert.equal(result.totals.overtimeDays, 3);
   assert.equal(result.totals.averageOvertimeMinutes, 80, '平均加班按全部完整出勤日计算');
   assert.equal(result.totals.workMinutes, 28 * 60);
   assert.equal(result.totals.completeWorkDays, 3);
+  assert.equal(result.totals.averageAttendanceDays, 3);
   assert.equal(result.totals.fullLeaveWorkDays, 1);
-  assert.equal(result.totals.averageWorkDays, 4);
-  assert.equal(result.totals.averageWorkMinutes, 420, '全天请假应按 8 小时参与平均工时');
+  assert.equal(result.totals.halfLeaveWorkDays, 2);
+  assert.equal(result.totals.halfLeaveCreditMinutes, 8 * 60);
+  assert.equal(result.totals.averageWorkDays, 3);
+  assert.equal(result.totals.averageWorkMinutes, 560, '半天假应按 4 小时额度加实际半天工时，全天假应排除');
   const trend = api.getOvertimeTrendData(result.rows);
   assert.equal(trend.length, 4);
   assert.equal(trend.filter((item) => item.available).length, 3);
@@ -562,6 +586,28 @@ const baseConfig = {
   assert.equal(july8Candle.direction, 'down');
   assert.equal(july9Gap.available, false, '全天请假不能伪装成 0 加班 K 线');
   assert.equal(july9Gap.direction, 'gap');
+
+  const withExcludedHalfLeave = api.buildDailySummary(
+    events,
+    config,
+    new Date(2026, 6, 10, 12, 0),
+    [
+      { date: '2026-07-07', type: 'leave-am', includeInAverage: false },
+      { date: '2026-07-08', type: 'leave-pm' },
+      { date: '2026-07-09', type: 'leave-full' },
+    ],
+  );
+  const excludedMorning = withExcludedHalfLeave.rows.find((row) => row.date === '2026-07-07');
+  assert.equal(excludedMorning.workMinutes, 5 * 60 + 30, '取消纳入不应抹掉实际半天有效工时');
+  assert.equal(excludedMorning.averageWorkContributionMinutes, null);
+  assert.equal(excludedMorning.halfLeaveWorkCredit, false);
+  assert.equal(withExcludedHalfLeave.totals.completeWorkDays, 3, '半天假仍参与完整出勤和平均加班');
+  assert.equal(withExcludedHalfLeave.totals.averageOvertimeMinutes, 80);
+  assert.equal(withExcludedHalfLeave.totals.halfLeaveWorkDays, 1);
+  assert.equal(withExcludedHalfLeave.totals.excludedHalfLeaveDays, 1);
+  assert.equal(withExcludedHalfLeave.totals.workMinutes, 18 * 60 + 30);
+  assert.equal(withExcludedHalfLeave.totals.averageWorkDays, 2);
+  assert.equal(withExcludedHalfLeave.totals.averageWorkMinutes, 555);
 
   const risingAcrossGap = api.getOvertimeTrendData([
     { date: '2026-07-13', weekday: '周一', workday: true, status: '正常', workMinutes: 540, overtimeMinutes: 30 },
@@ -702,11 +748,13 @@ const baseConfig = {
     assert.equal(row.completeAttendance, false);
     assert.equal(row.workDuration, '—');
     assert.equal(row.overtime, '—');
+    assert.equal(row.restDayOvertime, true);
     assert.match(row.status, /法定节假日打卡/);
   }
   assert.equal(result.totals.workdays, 1);
   assert.equal(result.totals.attended, 1);
   assert.equal(result.totals.rest, 2);
+  assert.equal(result.totals.restDayOvertimeDays, 2);
   assert.equal(result.totals.completeWorkDays, 1);
   assert.equal(result.totals.overtimeMinutes, 60);
   assert.equal(result.totals.averageOvertimeMinutes, 60);

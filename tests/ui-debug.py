@@ -193,9 +193,10 @@ def run() -> dict:
             )"""
         )
         assert "平均加班 = 加班总时长 ÷ 全部完整出勤日" in calculation_policy
-        assert "全天请假和工作日出差均固定计入 8 小时工时" in calculation_policy
+        assert "全天请假不进入平均工时分子或分母" in calculation_policy
+        assert "4 小时请假额度 + 实际半天有效工时" in calculation_policy
         assert "平均工时 =" in calculation_policy
-        assert "周末出差、普通休息日和法定节假日不参与平均值计算" in calculation_policy
+        assert "上下班卡完整时另计 1 个周末/节假日加班日" in calculation_policy
         assert (
             host.locator("#manualType option[value='holiday']").inner_text()
             == "法定节假日"
@@ -323,6 +324,12 @@ def run() -> dict:
         manual_dialog = manual_host.locator("#manualDialog")
         assert manual_dialog.is_visible()
         manual_host.locator("#manualType").select_option("leave-pm")
+        half_average = manual_host.locator("#manualIncludeInAverage")
+        assert manual_host.locator("#manualHalfAverageField").is_visible()
+        assert half_average.is_checked()
+        assert "4 小时请假额度 + 实际半天有效工时" in manual_host.locator(
+            "#manualHint"
+        ).inner_text()
         manual_host.locator("#manualClockIn").fill("09:00")
         manual_host.locator("#manualClockOut").fill("14:30")
         manual_host.locator("#manualNote").fill("下午请假审批已通过")
@@ -348,6 +355,7 @@ def run() -> dict:
         assert "半天出勤正常" in manual_saved["status"]
         assert "下午半天假" in manual_saved["source"]
         assert "下午请假审批已通过" in manual_saved["storage"]
+        assert '"includeInAverage":true' in manual_saved["storage"]
 
         manual_page.reload(wait_until="load")
         manual_page.wait_for_function(
@@ -357,8 +365,22 @@ def run() -> dict:
         manual_host = manual_page.locator("#fs-attendance-assistant")
         persisted_row = manual_host.locator("tbody tr:has([data-edit-date='2026-07-02'])")
         assert "下午半天假" in persisted_row.locator("td").nth(9).inner_text()
+        persisted_row.locator("[data-edit-date='2026-07-02']").click()
+        assert manual_host.locator("#manualHalfAverageField").is_visible()
+        assert manual_host.locator("#manualIncludeInAverage").is_checked()
+        manual_host.locator("#manualIncludeInAverage").uncheck()
+        assert "当前不纳入平均工时" in manual_host.locator("#manualHint").inner_text()
+        manual_host.locator("#manualForm button[type='submit']").click()
+        excluded_storage = manual_page.evaluate(
+            "localStorage.getItem('fs-attendance-assistant:manual:v1')"
+        )
+        assert '"includeInAverage":false' in excluded_storage
+        assert "1 个计入均值日" in manual_host.locator(
+            "#summary .work-summary .metric"
+        ).nth(4).locator("small").inner_text()
         manual_page.set_viewport_size({"width": 390, "height": 844})
         persisted_row.locator("[data-edit-date='2026-07-02']").click()
+        assert not manual_host.locator("#manualIncludeInAverage").is_checked()
         dialog_box = manual_host.locator("#manualDialog").bounding_box()
         assert dialog_box and dialog_box["width"] <= 366 and dialog_box["height"] <= 820
         manual_page.screenshot(path="/tmp/attendance-browser-manual.png")
@@ -370,7 +392,7 @@ def run() -> dict:
         holiday_row = manual_host.locator("tbody tr:has([data-edit-date='2026-07-02'])")
         holiday_row.locator("[data-edit-date='2026-07-02']").click()
         manual_host.locator("#manualType").select_option("holiday")
-        assert "不进入平均加班和平均工时的分母" in manual_host.locator(
+        assert "另计 1 个节假日加班日" in manual_host.locator(
             "#manualHint"
         ).inner_text()
         manual_host.locator("#manualForm button[type='submit']").click()
@@ -381,12 +403,15 @@ def run() -> dict:
         assert manual_host.locator(
             "#summary .summary"
         ).first.locator(".metric").nth(1).locator("b").inner_text() == "1"
+        assert manual_host.locator(
+            "#summary .work-summary .metric"
+        ).nth(2).locator("b").inner_text() == "1"
         assert "1 个完整出勤日" in manual_host.locator(
             "#summary .work-summary .metric"
-        ).nth(2).locator("small").inner_text()
+        ).nth(3).locator("small").inner_text()
         assert "1 个计入均值日" in manual_host.locator(
             "#summary .work-summary .metric"
-        ).nth(3).locator("small").inner_text()
+        ).nth(4).locator("small").inner_text()
         holiday_row.locator("[data-edit-date='2026-07-02']").click()
         manual_host.locator("#deleteManual").click()
         assert manual_page.evaluate("localStorage.getItem('fs-attendance-assistant:manual:v1')") == "[]"

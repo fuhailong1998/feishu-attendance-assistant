@@ -736,10 +736,15 @@
     const totals = report.totals || {};
     const completeWorkDays = number(totals.completeWorkDays);
     const fullLeaveWorkDays = number(totals.fullLeaveWorkDays);
+    const halfLeaveWorkDays = number(totals.halfLeaveWorkDays);
+    const excludedHalfLeaveDays = number(totals.excludedHalfLeaveDays);
     const travelWorkDays = number(totals.travelWorkDays);
+    const averageAttendanceDays = hasNumericValue(totals.averageAttendanceDays)
+      ? number(totals.averageAttendanceDays)
+      : Math.max(0, completeWorkDays - excludedHalfLeaveDays);
     const averageWorkDays = hasNumericValue(totals.averageWorkDays)
       ? number(totals.averageWorkDays)
-      : completeWorkDays + fullLeaveWorkDays + travelWorkDays;
+      : averageAttendanceDays + travelWorkDays;
     const metrics = [
       [number(totals.workdays), '应出勤', '周期内已到工作日', 'primary'],
       [number(totals.attended), '有记录', '工作日有效状态', 'success'],
@@ -747,11 +752,12 @@
       [number(totals.abnormal), '异常', '迟到、早退或缺卡', number(totals.abnormal) ? 'danger' : ''],
       [number(totals.pending), '待核对', '缺少完整依据', number(totals.pending) ? 'warning' : ''],
       [formatMinutes(totals.overtimeMinutes), '加班总计', `${number(totals.overtimeDays)} 个加班日`, number(totals.overtimeMinutes) ? 'primary' : ''],
+      [number(totals.restDayOvertimeDays), '周末/节假日加班', '完整上下班卡的天数', number(totals.restDayOvertimeDays) ? 'primary' : ''],
       [formatMinutes(totals.averageOvertimeMinutes), '平均加班', `${completeWorkDays} 个完整出勤日（含 0 加班）`, ''],
       [
         formatMinutes(totals.averageWorkMinutes),
         '平均工时',
-        `${averageWorkDays} 个计入均值日${fullLeaveWorkDays ? `，含 ${fullLeaveWorkDays} 天全天假` : ''}${travelWorkDays ? `，含 ${travelWorkDays} 个工作日出差` : ''}`,
+        `${averageWorkDays} 个计入均值日${halfLeaveWorkDays ? `，含 ${halfLeaveWorkDays} 个半天假` : ''}${travelWorkDays ? `，含 ${travelWorkDays} 个工作日出差` : ''}${fullLeaveWorkDays ? `；${fullLeaveWorkDays} 天全天假已排除` : ''}`,
         '',
       ],
     ];
@@ -797,10 +803,15 @@
     const period = report.period || {};
     const completeWorkDays = number(totals.completeWorkDays);
     const fullLeaveWorkDays = number(totals.fullLeaveWorkDays);
+    const halfLeaveWorkDays = number(totals.halfLeaveWorkDays);
+    const excludedHalfLeaveDays = number(totals.excludedHalfLeaveDays);
     const travelWorkDays = number(totals.travelWorkDays);
+    const averageAttendanceDays = hasNumericValue(totals.averageAttendanceDays)
+      ? number(totals.averageAttendanceDays)
+      : Math.max(0, completeWorkDays - excludedHalfLeaveDays);
     const averageWorkDays = hasNumericValue(totals.averageWorkDays)
       ? number(totals.averageWorkDays)
-      : completeWorkDays + fullLeaveWorkDays + travelWorkDays;
+      : averageAttendanceDays + travelWorkDays;
     const weekdayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
     const workdays = (Array.isArray(config.workdays) ? config.workdays : [])
       .map(Number)
@@ -815,7 +826,7 @@
     );
     setText(
       '#rule-scope-detail',
-      '只统计当前周期内的消息、审批记录与本地补充；未来日期显示为“未到”。周末出差、普通休息日和法定节假日即使有打卡，也只保留明细，不进入“有记录”、应出勤、工时、加班或平均值。',
+      '只统计当前周期内的消息、审批记录与本地补充；未来日期显示为“未到”。周末出差、普通休息日和法定节假日不进入“有记录”、应出勤、工时或平均值；休息日/节假日上下班卡完整时只另计加班天数。',
     );
     setText(
       '#rule-workday-detail',
@@ -841,7 +852,7 @@
     setText(
       '#rule-work-current',
       averageWorkDays
-        ? `当前周期：${formatMinutes(totals.workMinutes)} ÷ ${averageWorkDays} 个计入均值日 = ${formatMinutes(totals.averageWorkMinutes)}；其中全天请假 ${fullLeaveWorkDays} 天、工作日出差 ${travelWorkDays} 天。`
+        ? `当前周期：${formatMinutes(totals.workMinutes)} ÷ ${averageWorkDays} 个计入均值日 = ${formatMinutes(totals.averageWorkMinutes)}；纳入半天假 ${halfLeaveWorkDays} 天（请假额度 ${formatMinutes(totals.halfLeaveCreditMinutes)}），工作日出差 ${travelWorkDays} 天；全天请假 ${fullLeaveWorkDays} 天、取消纳入的半天假 ${excludedHalfLeaveDays} 天均已排除。`
         : '当前周期暂无可计入平均工时的日期，平均工时为 0 分。',
     );
   }
@@ -1329,8 +1340,25 @@
   function appendSourceCell(row, item) {
     const cell = document.createElement('td');
     const stack = createNode('span', 'source-stack');
-    if (number(item.evidenceCount)) {
-      stack.append(createNode('span', 'source-chip', `${number(item.evidenceCount)} 条消息`));
+    const evidenceCount = number(item.evidenceCount);
+    if (evidenceCount) {
+      const sourceButton = createNode(
+        'button',
+        'source-chip source-message-button',
+        `查看 ${evidenceCount} 条消息`,
+      );
+      sourceButton.type = 'button';
+      sourceButton.dataset.sourceDate = item.date;
+      sourceButton.setAttribute('aria-haspopup', 'dialog');
+      sourceButton.setAttribute('aria-controls', 'reconcile-dialog');
+      sourceButton.setAttribute(
+        'aria-label',
+        `查看 ${item.date} 的 ${evidenceCount} 条来源消息`,
+      );
+      sourceButton.addEventListener('click', () => {
+        openReconcileDialog(item.date, { focusEvidence: true });
+      });
+      stack.append(sourceButton);
     }
     if (item.manual) {
       stack.append(createNode('span', 'source-chip manual', item.manualLabel || '本地补充'));
@@ -1478,9 +1506,9 @@
   function reconciliationRuleText(type) {
     const rules = {
       confirmed: '只记录“已核对”，不会改变机器人识别出的打卡、异常或统计结果。',
-      holiday: '法定节假日不计应出勤、工时或加班，也不进入平均加班和平均工时的分母。',
+      holiday: '法定节假日不计应出勤、工时或平均值；上下班卡完整时另计 1 个节假日加班日。',
       patch: '补录时间会覆盖当天对应一侧的机器人打卡，并重新判断迟到、早退、工时和加班。',
-      'leave-full': '全天请假会覆盖机器人异常，并按 8 小时计入平均工时。',
+      'leave-full': '全天请假会覆盖机器人异常，但不进入平均工时的分子或分母。',
       'leave-am': '上午半天假按 14:00–15:00 上班、18:00–19:00 下班的联动规则重新计算。',
       'leave-pm': '下午半天假按 08:30–09:30 上班、14:00–15:00 下班的联动规则重新计算。',
       travel: '工作日出差固定按 8 小时计入平均工时；周末出差只保留明细，不进入平均值分母。',
@@ -1492,9 +1520,11 @@
 
   function updateReconciliationHint() {
     const type = $('#reconcile-type').value;
+    const isHalfLeave = type === 'leave-am' || type === 'leave-pm';
     const clockIn = $('#reconcile-clock-in');
     const clockOut = $('#reconcile-clock-out');
     const nextDay = $('#reconcile-next-day');
+    $('#reconcile-half-average-field').hidden = !isHalfLeave;
     const confirmed = type === 'confirmed';
     clockIn.disabled = confirmed;
     clockOut.disabled = confirmed;
@@ -1509,6 +1539,11 @@
     if (!nextDayEligible) nextDay.checked = false;
 
     let text = reconciliationRuleText(type);
+    if (isHalfLeave) {
+      text += $('#reconcile-include-average').checked
+        ? ' 当前已纳入平均工时，按“4 小时请假额度 + 实际半天有效工时”计算。'
+        : ' 当前不纳入平均工时，仅保留打卡、状态与加班统计。';
+    }
     let warning = false;
     if (!confirmed && inMinutes !== null && outMinutes !== null) {
       const resolvedOut = outMinutes + (nextDay.checked ? 24 * 60 : 0);
@@ -1529,9 +1564,10 @@
     $('#reconcile-hint').dataset.tone = warning ? 'warning' : '';
   }
 
-  function openReconcileDialog(date) {
+  function openReconcileDialog(date, options = {}) {
     const row = report.rows.find((item) => item.date === date);
     if (!row) return;
+    const focusEvidence = Boolean(options.focusEvidence);
     const entry = reconciliationFor(date);
     const adjustment = entry?.adjustment || row.manual || null;
     const type = entry?.outcome
@@ -1553,17 +1589,27 @@
           '当天没有解析到假勤消息；请结合实际出勤、请假或补卡情况核对。',
         )]),
     );
-    $('#reconcile-evidence').open = evidence.length === 0;
+    $('#reconcile-evidence').open = focusEvidence || evidence.length === 0;
     $('#reconcile-type').value = type;
     $('#reconcile-clock-in').value = adjustment?.clockIn || '';
     $('#reconcile-clock-out').value = adjustment?.clockOut || '';
     $('#reconcile-next-day').checked = Boolean(adjustment?.clockOutNextDay);
+    $('#reconcile-include-average').checked = adjustment
+      ? adjustment.includeInAverage !== false
+      : true;
     $('#reconcile-note').value = entry?.note || adjustment?.note || '';
     $('#reconcile-delete').hidden = !entry;
     setText('#reconcile-error', '');
     updateReconciliationHint();
     if (!dialog.open) dialog.showModal();
-    window.requestAnimationFrame(() => $('#reconcile-type').focus());
+    window.requestAnimationFrame(() => {
+      if (focusEvidence) {
+        evidenceList.scrollIntoView({ block: 'nearest' });
+        evidenceList.focus({ preventScroll: true });
+        return;
+      }
+      $('#reconcile-type').focus();
+    });
   }
 
   function closeReconcileDialog() {
@@ -1580,6 +1626,7 @@
     const clockIn = $('#reconcile-clock-in').value;
     const clockOut = $('#reconcile-clock-out').value;
     const clockOutNextDay = $('#reconcile-next-day').checked;
+    const includeInAverage = $('#reconcile-include-average').checked;
     const note = $('#reconcile-note').value.trim().slice(0, 300);
     if (!RECONCILIATION_TYPES[outcome]) {
       setText('#reconcile-error', '请选择有效的核对结果。');
@@ -1614,6 +1661,7 @@
         clockIn,
         clockOut,
         clockOutNextDay,
+        includeInAverage,
         note,
         updatedAt: new Date().toISOString(),
       });
@@ -1687,7 +1735,7 @@
     return [
       `考勤周期：${period.start || '—'} 至 ${period.end || '—'}（${periodModeLabel(period.mode)}）`,
       `应出勤 ${number(totals.workdays)} 天；工作日有记录 ${number(totals.attended)} 天；正常 ${number(totals.normal)} 天；异常 ${number(totals.abnormal)} 天；待核对 ${number(totals.pending)} 天。`,
-      `加班总计 ${formatMinutes(totals.overtimeMinutes)}（${number(totals.overtimeDays)} 个加班日）；平均加班 ${formatMinutes(totals.averageOvertimeMinutes)}（${number(totals.completeWorkDays)} 个完整出勤日）；平均工作 ${formatMinutes(totals.averageWorkMinutes)}（${number(totals.averageWorkDays)} 个计入均值日，含 ${number(totals.fullLeaveWorkDays)} 天全天假、${number(totals.travelWorkDays)} 个工作日出差）。`,
+      `工作日加班总计 ${formatMinutes(totals.overtimeMinutes)}（${number(totals.overtimeDays)} 个加班日）；周末/节假日加班 ${number(totals.restDayOvertimeDays)} 天；平均加班 ${formatMinutes(totals.averageOvertimeMinutes)}（${number(totals.completeWorkDays)} 个完整出勤日）；平均工作 ${formatMinutes(totals.averageWorkMinutes)}（${number(totals.averageWorkDays)} 个计入均值日，含 ${number(totals.halfLeaveWorkDays)} 个半天假、${number(totals.travelWorkDays)} 个工作日出差；${number(totals.fullLeaveWorkDays)} 天全天假已排除）。`,
       `网页已核对 ${reviewed.length} 天；仍有 ${unresolved.length} 个异常或待核对日期未处理。`,
       rows.length ? '异常/待核对明细：' : '未发现异常或待核对日期。',
       ...rows.map((row) => `${row.date} ${row.weekday}：${row.clockIn}–${row.clockOut}，${row.status}${isReviewed(row) ? '（已核对）' : ''}`),
@@ -1854,6 +1902,7 @@
       $('#reconcile-clock-in'),
       $('#reconcile-clock-out'),
       $('#reconcile-next-day'),
+      $('#reconcile-include-average'),
     ]) {
       input.addEventListener('input', () => {
         setText('#reconcile-error', '');

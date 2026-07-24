@@ -178,7 +178,13 @@ def fixture_report() -> dict:
             "averageOvertimeMinutes": round(overtime_minutes / attended),
             "averageWorkMinutes": 474,
             "completeWorkDays": attended,
+            "averageAttendanceDays": attended,
             "fullLeaveWorkDays": 0,
+            "halfLeaveWorkDays": 0,
+            "excludedHalfLeaveDays": 0,
+            "halfLeaveCreditMinutes": 0,
+            "travelWorkDays": 0,
+            "restDayOvertimeDays": 0,
             "averageWorkDays": attended,
         },
         "rows": rows,
@@ -251,7 +257,7 @@ def run() -> dict:
                 assert "考勤周期" in page.locator("[data-period-mode='detected']").inner_text()
                 assert page.locator("#period-apply").count() == 0
                 assert page.locator("#detected-cycle-select option").count() == 2
-                assert page.locator("#metric-grid .metric").count() == 8
+                assert page.locator("#metric-grid .metric").count() == 9
                 assert page.locator("#details-body tr").count() == len(report["rows"])
                 assert "15 个完整出勤日" in page.locator("#chart-subtitle").inner_text()
                 assert page.locator("#calculation-rules-title").inner_text() == "计算规则"
@@ -268,9 +274,11 @@ def run() -> dict:
                 )
                 rules_text = page.locator(".rules-card").inner_text()
                 assert "加班总时长 ÷ 全部完整出勤日" in rules_text
-                assert "全天请假和工作日出差固定计入 8 小时" in rules_text
+                assert "全天请假不进入平均工时的分子或分母" in rules_text
+                assert "4 小时请假额度 + 实际半天有效工时" in rules_text
                 assert "0 加班日同样进入分母" in rules_text
-                assert "周末出差、普通休息日和法定节假日不参与计算" in rules_text
+                assert "另计 1 个周末/节假日加班日" in rules_text
+                assert "全天请假、周末出差、普通休息日和法定节假日不参与计算" in rules_text
                 assert "法定节假日 33 天，额外工作日 6 天" in rules_text
                 assert (
                     page.locator(
@@ -292,7 +300,7 @@ def run() -> dict:
                 results[str(width)] = {
                     "pageWidth": page_width,
                     "viewportWidth": viewport_width,
-                    "metricCount": 8,
+                    "metricCount": 9,
                     "rowCount": len(report["rows"]),
                 }
                 if width in {375, 1440}:
@@ -405,6 +413,37 @@ def run() -> dict:
             assert before != after
             assert page.locator("#overtime-chart .chart-point").count() > 0
 
+            source_button = page.locator(
+                "#row-2026-07-13 .source-message-button"
+            )
+            assert "查看 1 条消息" in source_button.inner_text()
+            assert source_button.get_attribute("aria-haspopup") == "dialog"
+            assert (
+                source_button.get_attribute("aria-controls")
+                == "reconcile-dialog"
+            )
+            assert (
+                page.locator(
+                    "#row-2026-07-21 .source-message-button"
+                ).count()
+                == 0
+            )
+            source_button.focus()
+            page.keyboard.press("Enter")
+            assert page.locator("#reconcile-dialog").is_visible()
+            assert (
+                page.locator("#reconcile-evidence").get_attribute("open")
+                is not None
+            )
+            assert (
+                page.evaluate("document.activeElement.id")
+                == "reconcile-evidence-list"
+            )
+            assert "测试打卡记录" in page.locator(
+                "#reconcile-evidence-list"
+            ).inner_text()
+            page.locator("#reconcile-close").click()
+
             page.locator("[data-reconcile-date='2026-07-21']").click()
             assert page.locator("#reconcile-dialog").is_visible()
             assert page.locator("#reconcile-evidence").get_attribute("open") is not None
@@ -490,7 +529,7 @@ def run() -> dict:
 
             page.locator("[data-reconcile-date='2026-07-09']").click()
             page.locator("#reconcile-type").select_option("holiday")
-            assert "不进入平均加班和平均工时的分母" in page.locator(
+            assert "另计 1 个节假日加班日" in page.locator(
                 "#reconcile-hint"
             ).inner_text()
             page.locator("#reconcile-note").fill("法定节假日")
@@ -499,18 +538,80 @@ def run() -> dict:
             assert holiday_row.locator("td").nth(1).inner_text() == "法定节假日"
             assert holiday_row.locator("td").nth(5).inner_text() == "—"
             assert "法定节假日打卡" in holiday_row.locator("td").nth(7).inner_text()
+            assert page.locator(
+                "#metric-grid .metric"
+            ).nth(6).locator("strong").inner_text() == "1"
             assert "14 个完整出勤日" in page.locator(
                 "#metric-grid .metric"
-            ).nth(6).locator("small").inner_text()
+            ).nth(7).locator("small").inner_text()
             assert "14 个计入均值日" in page.locator(
                 "#metric-grid .metric"
-            ).nth(7).locator("small").inner_text()
+            ).nth(8).locator("small").inner_text()
             assert "÷ 14 个完整出勤日" in page.locator(
                 "#rule-overtime-current"
             ).inner_text()
             holiday_row.locator("[data-reconcile-date='2026-07-09']").click()
             page.locator("#reconcile-delete").click()
             assert page.locator("#count-reviewed").inner_text() == "1"
+
+            half_context = browser.new_context(
+                viewport={"width": 1024, "height": 900}
+            )
+            half_page = half_context.new_page()
+            half_page.on(
+                "console",
+                lambda message: (
+                    console_errors.append(message.text)
+                    if message.type == "error"
+                    else None
+                ),
+            )
+            half_page.on(
+                "pageerror", lambda error: page_errors.append(str(error))
+            )
+            half_page.goto(html_path.as_uri(), wait_until="load")
+            half_page.wait_for_function(
+                "window.__ATTENDANCE_REPORT_READY__ === true"
+            )
+            half_page.locator("[data-reconcile-date='2026-07-08']").click()
+            half_page.locator("#reconcile-type").select_option("leave-pm")
+            assert half_page.locator(
+                "#reconcile-half-average-field"
+            ).is_visible()
+            assert half_page.locator("#reconcile-include-average").is_checked()
+            assert "4 小时请假额度 + 实际半天有效工时" in half_page.locator(
+                "#reconcile-hint"
+            ).inner_text()
+            half_page.locator("#reconcile-clock-in").fill("09:00")
+            half_page.locator("#reconcile-clock-out").fill("14:30")
+            half_page.locator("#reconcile-form button[type='submit']").click()
+            assert "15 个计入均值日" in half_page.locator(
+                "#metric-grid .metric"
+            ).nth(8).locator("small").inner_text()
+
+            half_page.locator("[data-reconcile-date='2026-07-08']").click()
+            assert half_page.locator("#reconcile-include-average").is_checked()
+            half_page.locator("#reconcile-include-average").uncheck()
+            assert "当前不纳入平均工时" in half_page.locator(
+                "#reconcile-hint"
+            ).inner_text()
+            half_page.locator("#reconcile-form button[type='submit']").click()
+            assert "15 个完整出勤日" in half_page.locator(
+                "#metric-grid .metric"
+            ).nth(7).locator("small").inner_text()
+            assert "14 个计入均值日" in half_page.locator(
+                "#metric-grid .metric"
+            ).nth(8).locator("small").inner_text()
+            assert "取消纳入的半天假 1 天" in half_page.locator(
+                "#rule-work-current"
+            ).inner_text()
+            half_storage = half_page.evaluate(
+                """() => localStorage.getItem(
+                  'attendance-report:reconciliation:2:global'
+                )"""
+            )
+            assert '"includeInAverage":false' in half_storage
+            half_context.close()
 
             migration_context = browser.new_context(
                 viewport={"width": 1024, "height": 900}
@@ -607,7 +708,9 @@ def run() -> dict:
         },
         "calculationRules": {
             "overtimeUsesAllCompleteAttendanceDays": True,
-            "fullDayLeaveCreditsEightHours": True,
+            "fullDayLeaveExcludedFromAverageWork": True,
+            "halfDayLeaveCreditAndToggle": True,
+            "restDayOvertimeDays": True,
             "visibleOnPage": True,
         },
     }
