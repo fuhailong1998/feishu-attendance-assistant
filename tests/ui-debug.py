@@ -183,6 +183,38 @@ def run() -> dict:
         rule = host.locator("details.rule-card")
         rule.locator("summary").click()
         assert rule.get_attribute("open") is not None
+        calculation_policy_node = host.locator(".calculation-policy")
+        calculation_policy = calculation_policy_node.inner_text()
+        assert host.evaluate(
+            """element => Boolean(
+              element.shadowRoot.querySelector('.import-card').compareDocumentPosition(
+                element.shadowRoot.querySelector('.calculation-policy')
+              ) & Node.DOCUMENT_POSITION_FOLLOWING
+            )"""
+        )
+        assert "平均加班 = 加班总时长 ÷ 全部完整出勤日" in calculation_policy
+        assert "全天请假和工作日出差均固定计入 8 小时工时" in calculation_policy
+        assert "平均工时 =" in calculation_policy
+        assert "周末出差、普通休息日和法定节假日不参与平均值计算" in calculation_policy
+        assert (
+            host.locator("#manualType option[value='holiday']").inner_text()
+            == "法定节假日"
+        )
+        assert host.locator("#holidayDates").evaluate(
+            "element => element.tagName"
+        ) == "TEXTAREA"
+        holiday_dates = host.locator("#holidayDates").input_value()
+        extra_work_dates = host.locator("#extraWorkDates").input_value()
+        assert "2026-01-01" in holiday_dates
+        assert "2026-10-07" in holiday_dates
+        assert "2026-01-04" in extra_work_dates
+        assert "2026-10-10" in extra_work_dates
+        assert "国务院办公厅公布的 2026 年" in rule.locator(".hint").inner_text()
+        stored_config = page.evaluate(
+            "JSON.parse(localStorage.getItem('fs-attendance-assistant:config:v1'))"
+        )
+        assert stored_config["officialCalendarVersion"] == "CN-2026"
+        assert "2026-02-15" in stored_config["holidayDates"]
         assert host.locator("#flexScheduleFields").is_visible()
         host.locator("#scheduleMode").select_option("fixed")
         assert host.locator("#fixedScheduleFields").is_visible()
@@ -334,6 +366,30 @@ def run() -> dict:
         assert not manual_host.locator("#manualDialog").is_visible()
         assert manual_page.evaluate("localStorage.getItem('fs-attendance-assistant:manual:v1')") == "[]"
         assert "下午半天假" not in manual_host.locator("tbody tr:has([data-edit-date='2026-07-02']) td").nth(9).inner_text()
+
+        holiday_row = manual_host.locator("tbody tr:has([data-edit-date='2026-07-02'])")
+        holiday_row.locator("[data-edit-date='2026-07-02']").click()
+        manual_host.locator("#manualType").select_option("holiday")
+        assert "不进入平均加班和平均工时的分母" in manual_host.locator(
+            "#manualHint"
+        ).inner_text()
+        manual_host.locator("#manualForm button[type='submit']").click()
+        holiday_cells = holiday_row.locator("td")
+        assert holiday_cells.nth(1).inner_text().strip() == "法定节假日"
+        assert holiday_cells.nth(5).inner_text().strip() == "—"
+        assert "法定节假日打卡" in holiday_cells.nth(8).inner_text()
+        assert manual_host.locator(
+            "#summary .summary"
+        ).first.locator(".metric").nth(1).locator("b").inner_text() == "1"
+        assert "1 个完整出勤日" in manual_host.locator(
+            "#summary .work-summary .metric"
+        ).nth(2).locator("small").inner_text()
+        assert "1 个计入均值日" in manual_host.locator(
+            "#summary .work-summary .metric"
+        ).nth(3).locator("small").inner_text()
+        holiday_row.locator("[data-edit-date='2026-07-02']").click()
+        manual_host.locator("#deleteManual").click()
+        assert manual_page.evaluate("localStorage.getItem('fs-attendance-assistant:manual:v1')") == "[]"
         manual_context.close()
 
         empty_page = browser.new_page(viewport={"width": 1024, "height": 768})

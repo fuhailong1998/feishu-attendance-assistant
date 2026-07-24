@@ -1,5 +1,6 @@
 .codex/
 .codegraph/
+.cursor/
 .DS_Store
 .attendance-data/
 __pycache__/

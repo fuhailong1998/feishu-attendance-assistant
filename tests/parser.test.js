@@ -351,6 +351,9 @@ const baseConfig = {
   assert.equal(may29.status, '正常');
   assert.equal(may30.clockOut, '22:00');
   assert.equal(may30.status, '休息日打卡');
+  assert.equal(result.totals.attended, 2, '普通休息日打卡不能计入“有记录”');
+  assert.equal(result.totals.rest, 1);
+  assert.equal(result.totals.completeWorkDays, 2);
 
   const april18Config = { ...overnightConfig, rangeStart: '2026-04-18', rangeEnd: '2026-04-18' };
   const april18 = api.buildDailySummary([
@@ -530,14 +533,19 @@ const baseConfig = {
   assert.match(afternoonLeave.status, /半天出勤正常/);
 
   assert.equal(fullLeave.status, '全天请假');
-  assert.equal(fullLeave.workDuration, '—');
+  assert.equal(fullLeave.workDuration, '8小时');
+  assert.equal(fullLeave.workMinutes, 8 * 60);
+  assert.equal(fullLeave.completeAttendance, false);
+  assert.equal(fullLeave.fullLeaveWorkCredit, true);
   assert.equal(result.totals.leave, 2, '全天假计 1 天，两个半天各计 0.5 天');
   assert.equal(result.totals.overtimeMinutes, 4 * 60);
   assert.equal(result.totals.overtimeDays, 3);
-  assert.equal(result.totals.averageOvertimeMinutes, 80, '平均加班按实际发生加班的日期计算');
-  assert.equal(result.totals.workMinutes, 20 * 60);
+  assert.equal(result.totals.averageOvertimeMinutes, 80, '平均加班按全部完整出勤日计算');
+  assert.equal(result.totals.workMinutes, 28 * 60);
   assert.equal(result.totals.completeWorkDays, 3);
-  assert.equal(result.totals.averageWorkMinutes, 400, '平均工时应包含完整半天出勤，并排除全天请假');
+  assert.equal(result.totals.fullLeaveWorkDays, 1);
+  assert.equal(result.totals.averageWorkDays, 4);
+  assert.equal(result.totals.averageWorkMinutes, 420, '全天请假应按 8 小时参与平均工时');
   const trend = api.getOvertimeTrendData(result.rows);
   assert.equal(trend.length, 4);
   assert.equal(trend.filter((item) => item.available).length, 3);
@@ -565,6 +573,200 @@ const baseConfig = {
   assert.equal(risingAcrossGap[2].closeMinutes, 75);
   assert.equal(risingAcrossGap[2].changeMinutes, 45);
   assert.equal(risingAcrossGap[2].direction, 'up');
+}
+
+{
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(api.mergeManualAdjustments([
+      { date: '2026-07-10', type: 'patch', clockIn: '09:05', note: '补签审批' },
+      { date: '2026-07-10', type: 'travel', note: '出差审批' },
+      { date: '2026-07-11', type: 'leave-am' },
+      { date: '2026-07-11', type: 'leave-pm' },
+    ]))),
+    [
+      {
+        date: '2026-07-10',
+        type: 'travel',
+        clockIn: '09:05',
+        clockOut: '',
+        clockOutNextDay: false,
+        note: '出差审批',
+        updatedAt: '',
+      },
+      {
+        date: '2026-07-11',
+        type: 'leave-full',
+        clockIn: '',
+        clockOut: '',
+        clockOutNextDay: false,
+        note: '',
+        updatedAt: '',
+      },
+    ],
+    '同日审批应保留补签时间，上午和下午半天假应合并为全天假',
+  );
+}
+
+{
+  const config = {
+    ...baseConfig,
+    rangeStart: '2026-07-10',
+    rangeEnd: '2026-07-13',
+  };
+  const travel = ['2026-07-10', '2026-07-11', '2026-07-12', '2026-07-13']
+    .map((date) => ({ date, type: 'travel', note: '审批：我的出差' }));
+  const result = api.buildDailySummary(
+    [],
+    config,
+    new Date(2026, 6, 14, 12, 0),
+    travel,
+  );
+  const friday = result.rows.find((row) => row.date === '2026-07-10');
+  const saturday = result.rows.find((row) => row.date === '2026-07-11');
+  const sunday = result.rows.find((row) => row.date === '2026-07-12');
+  const monday = result.rows.find((row) => row.date === '2026-07-13');
+
+  assert.equal(result.totals.travel, 4);
+  assert.equal(result.totals.travelWorkDays, 2);
+  assert.equal(result.totals.completeWorkDays, 0);
+  assert.equal(result.totals.workMinutes, 16 * 60);
+  assert.equal(result.totals.averageWorkDays, 2);
+  assert.equal(result.totals.averageWorkMinutes, 8 * 60);
+  assert.equal(friday.status, '出差');
+  assert.equal(friday.workMinutes, 8 * 60);
+  assert.equal(friday.travelWorkCredit, true);
+  assert.equal(monday.workMinutes, 8 * 60);
+  assert.equal(saturday.status, '出差');
+  assert.equal(saturday.workMinutes, null);
+  assert.equal(saturday.travelWorkCredit, false);
+  assert.equal(sunday.workMinutes, null);
+  assert.equal(sunday.travelWorkCredit, false);
+}
+
+{
+  const config = {
+    ...baseConfig,
+    rangeStart: '2026-07-01',
+    rangeEnd: '2026-07-02',
+  };
+  const punches = [
+    ['2026-07-01', '09:00', '18:00'],
+    ['2026-07-02', '09:00', '19:00'],
+  ];
+  const events = punches.flatMap(([date, clockIn, clockOut]) => [
+    api.parseAttendanceMessage(`${date} 上班打卡成功 ${clockIn}`, date, config),
+    api.parseAttendanceMessage(`${date} 下班打卡成功 ${clockOut}`, date, config),
+  ]);
+  const result = api.buildDailySummary(events, config, new Date(2026, 6, 3, 12, 0));
+  assert.equal(result.totals.overtimeMinutes, 60);
+  assert.equal(result.totals.overtimeDays, 1);
+  assert.equal(result.totals.completeWorkDays, 2);
+  assert.equal(
+    result.totals.averageOvertimeMinutes,
+    30,
+    '0 加班的完整出勤日也必须进入平均加班分母',
+  );
+  assert.equal(result.totals.averageWorkDays, 2);
+  assert.equal(result.totals.averageWorkMinutes, 480);
+}
+
+{
+  const config = {
+    ...baseConfig,
+    rangeStart: '2026-07-01',
+    rangeEnd: '2026-07-03',
+    holidayDates: '2026-07-03',
+  };
+  const events = ['2026-07-01', '2026-07-02', '2026-07-03'].flatMap((date) => [
+    api.parseAttendanceMessage(`${date} 上班打卡成功 09:00`, date, config),
+    api.parseAttendanceMessage(`${date} 下班打卡成功 19:00`, date, config),
+  ]);
+  const holiday = api.normalizeManualAdjustment({
+    date: '2026-07-02',
+    type: 'holiday',
+    note: '公司法定放假',
+  });
+  assert.equal(api.manualAdjustmentLabel(holiday), '法定节假日');
+
+  const result = api.buildDailySummary(
+    events,
+    config,
+    new Date(2026, 6, 4, 12, 0),
+    [holiday],
+  );
+  const manualHoliday = result.rows.find((row) => row.date === '2026-07-02');
+  const configuredHoliday = result.rows.find((row) => row.date === '2026-07-03');
+  for (const row of [manualHoliday, configuredHoliday]) {
+    assert.equal(row.dayType, '法定节假日');
+    assert.equal(row.workday, false);
+    assert.equal(row.completeAttendance, false);
+    assert.equal(row.workDuration, '—');
+    assert.equal(row.overtime, '—');
+    assert.match(row.status, /法定节假日打卡/);
+  }
+  assert.equal(result.totals.workdays, 1);
+  assert.equal(result.totals.attended, 1);
+  assert.equal(result.totals.rest, 2);
+  assert.equal(result.totals.completeWorkDays, 1);
+  assert.equal(result.totals.overtimeMinutes, 60);
+  assert.equal(result.totals.averageOvertimeMinutes, 60);
+  assert.equal(result.totals.workMinutes, 510);
+  assert.equal(result.totals.averageWorkDays, 1);
+  assert.equal(result.totals.averageWorkMinutes, 510);
+  assert.equal(
+    api.getOvertimeTrendData(result.rows).length,
+    1,
+    '法定节假日即使有打卡也不应进入加班趋势或平均值',
+  );
+}
+
+{
+  const expectedHolidays = [
+    '2026-01-01', '2026-01-02', '2026-01-03',
+    '2026-02-15', '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19',
+    '2026-02-20', '2026-02-21', '2026-02-22', '2026-02-23',
+    '2026-04-04', '2026-04-05', '2026-04-06',
+    '2026-05-01', '2026-05-02', '2026-05-03', '2026-05-04', '2026-05-05',
+    '2026-06-19', '2026-06-20', '2026-06-21',
+    '2026-09-25', '2026-09-26', '2026-09-27',
+    '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04',
+    '2026-10-05', '2026-10-06', '2026-10-07',
+  ];
+  const expectedExtraWorkdays = [
+    '2026-01-04',
+    '2026-02-14',
+    '2026-02-28',
+    '2026-05-09',
+    '2026-09-20',
+    '2026-10-10',
+  ];
+  const defaults = api.getDefaultConfig();
+  assert.equal(defaults.officialCalendarVersion, 'CN-2026');
+  assert.deepEqual(defaults.holidayDates.split(/,\s*/), expectedHolidays);
+  assert.deepEqual(defaults.extraWorkDates.split(/,\s*/), expectedExtraWorkdays);
+
+  const config = {
+    ...defaults,
+    rangeStart: '2026-01-01',
+    rangeEnd: '2026-01-04',
+    scheduleMode: 'fixed',
+  };
+  const events = ['2026-01-01', '2026-01-04'].flatMap((date) => [
+    api.parseAttendanceMessage(`${date} 上班打卡成功 09:00`, date, config),
+    api.parseAttendanceMessage(`${date} 下班打卡成功 19:00`, date, config),
+  ]);
+  const result = api.buildDailySummary(events, config, new Date(2026, 0, 5, 12, 0));
+  const newYearHoliday = result.rows.find((row) => row.date === '2026-01-01');
+  const adjustedWorkday = result.rows.find((row) => row.date === '2026-01-04');
+  assert.equal(newYearHoliday.dayType, '法定节假日');
+  assert.equal(newYearHoliday.status, '法定节假日打卡');
+  assert.equal(newYearHoliday.workDuration, '—');
+  assert.equal(adjustedWorkday.dayType, '工作日');
+  assert.equal(adjustedWorkday.status, '正常');
+  assert.equal(result.totals.workdays, 1);
+  assert.equal(result.totals.attended, 1);
+  assert.equal(result.totals.rest, 3);
+  assert.equal(result.totals.completeWorkDays, 1);
 }
 
 {

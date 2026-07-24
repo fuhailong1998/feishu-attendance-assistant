@@ -10,25 +10,6 @@ const vm = require('node:vm');
 const ROOT = path.resolve(__dirname, '..');
 const DEFAULT_INPUT = path.join(ROOT, '.attendance-data', 'attendance-messages.json');
 const DEFAULT_OUTPUT = path.join(ROOT, '.attendance-data', 'attendance-report.json');
-const DEFAULT_CONFIG = Object.freeze({
-  cycleStartDay: 1,
-  rangeStart: '',
-  rangeEnd: '',
-  scheduleMode: 'flex-linked',
-  workStart: '09:00',
-  workEnd: '18:00',
-  flexStartEarliest: '08:30',
-  flexStartLatest: '09:30',
-  flexEndEarliest: '18:00',
-  flexEndLatest: '19:00',
-  graceMinutes: 0,
-  workdays: [1, 2, 3, 4, 5],
-  holidayDates: '',
-  extraWorkDates: '',
-  noMessageAsMissing: false,
-  unknownSplitTime: '14:00',
-  overnightClockOutCutoff: '06:00',
-});
 
 function parseArgs(argv) {
   const options = {
@@ -141,15 +122,16 @@ function parseNow(value) {
   return date;
 }
 
-function normalizeConfig(options, period) {
+function normalizeConfig(api, options, period) {
+  const defaults = api.getDefaultConfig();
   const overrides = readJson(options.config, {}) || {};
   const config = {
-    ...DEFAULT_CONFIG,
+    ...defaults,
     ...overrides,
     rangeStart: period.start,
     rangeEnd: period.end,
   };
-  if (!Array.isArray(config.workdays)) config.workdays = [...DEFAULT_CONFIG.workdays];
+  if (!Array.isArray(config.workdays)) config.workdays = [...defaults.workdays];
   return config;
 }
 
@@ -171,6 +153,17 @@ function compactRows(rows) {
   });
 }
 
+function compactEvents(events) {
+  return events.map((event) => ({
+    date: event.date,
+    inTimes: [...(event.inTimes || [])],
+    outTimes: [...(event.outTimes || [])],
+    unknownTimes: [...(event.unknownTimes || [])],
+    flags: { ...(event.flags || {}) },
+    text: event.text || '',
+  }));
+}
+
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const input = readJson(options.input);
@@ -181,9 +174,18 @@ function main() {
   const now = parseNow(options.now);
   const cycles = detectCycles(api, input.messages);
   const period = resolvePeriod(api, options, cycles, now);
-  const config = normalizeConfig(options, period);
+  const config = normalizeConfig(api, options, period);
   const manual = readJson(options.manual, []) || [];
   if (!Array.isArray(manual)) throw new Error('--manual 文件必须是 JSON 数组');
+  const approvalAdjustments = input.approval_adjustments || [];
+  if (!Array.isArray(approvalAdjustments)) {
+    throw new Error('采集文件中的 approval_adjustments 必须是 JSON 数组');
+  }
+  const normalizedApprovals = api.mergeManualAdjustments(approvalAdjustments);
+  const normalizedManual = api.mergeManualAdjustments([
+    ...normalizedApprovals,
+    ...manual,
+  ]);
 
   const events = [];
   let ignoredMessages = 0;
@@ -198,7 +200,7 @@ function main() {
     else ignoredMessages += 1;
   }
 
-  const summary = api.buildDailySummary(events, config, now, manual);
+  const summary = api.buildDailySummary(events, config, now, normalizedManual);
   if (summary.error) throw new Error(summary.error);
   const report = {
     schema_version: 1,
@@ -209,13 +211,20 @@ function main() {
       message_count: input.messages.length,
       first_message_at: input.source?.first_message_at || '',
       last_message_at: input.source?.last_message_at || '',
+      approval_collection_enabled: Boolean(input.source?.approval_collection_enabled),
+      approval_instances_matched: Number(input.source?.approval_instances_matched) || 0,
+      approval_instances_approved: Number(input.source?.approval_instances_approved) || 0,
+      approval_instances_unparsed: Number(input.source?.approval_instances_unparsed) || 0,
+      approval_adjustment_count: normalizedApprovals.length,
     },
     period,
     config,
     detected_cycles: cycles,
     parsed_event_count: events.length,
     ignored_message_count: ignoredMessages,
-    manual_adjustment_count: manual.length,
+    manual_adjustment_count: normalizedManual.length,
+    manual_adjustments: normalizedManual,
+    events: compactEvents(events),
     totals: summary.totals,
     rows: compactRows(summary.rows),
   };

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         飞书假勤消息考勤汇总
 // @namespace    https://github.com/fuhailong1998/feishu-attendance-assistant
-// @version      1.0.7
+// @version      1.0.9
 // @description  跨会话缓存飞书「假勤」记录，统计异常、工时和可切换的加班图表并导出 CSV
 // @author       fuhailong1998
 // @homepageURL  https://github.com/fuhailong1998/feishu-attendance-assistant
@@ -35,6 +35,7 @@
     dec: 12, december: 12,
   });
   const MANUAL_TYPES = Object.freeze({
+    holiday: '法定节假日',
     'leave-full': '全天请假',
     'leave-am': '上午半天假',
     'leave-pm': '下午半天假',
@@ -45,6 +46,27 @@
   });
   const LUNCH_START_MINUTES = 12 * 60;
   const LUNCH_END_MINUTES = 13 * 60 + 30;
+  const FULL_DAY_LEAVE_WORK_MINUTES = 8 * 60;
+  const OFFICIAL_CALENDAR_VERSION = 'CN-2026';
+  const CHINA_MAINLAND_2026_HOLIDAY_DATES = Object.freeze([
+    '2026-01-01', '2026-01-02', '2026-01-03',
+    '2026-02-15', '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19',
+    '2026-02-20', '2026-02-21', '2026-02-22', '2026-02-23',
+    '2026-04-04', '2026-04-05', '2026-04-06',
+    '2026-05-01', '2026-05-02', '2026-05-03', '2026-05-04', '2026-05-05',
+    '2026-06-19', '2026-06-20', '2026-06-21',
+    '2026-09-25', '2026-09-26', '2026-09-27',
+    '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04',
+    '2026-10-05', '2026-10-06', '2026-10-07',
+  ]);
+  const CHINA_MAINLAND_2026_EXTRA_WORK_DATES = Object.freeze([
+    '2026-01-04',
+    '2026-02-14',
+    '2026-02-28',
+    '2026-05-09',
+    '2026-09-20',
+    '2026-10-10',
+  ]);
 
   const DEFAULT_CONFIG = Object.freeze({
     cycleStartDay: 1,
@@ -59,12 +81,20 @@
     flexEndLatest: '19:00',
     graceMinutes: 0,
     workdays: [1, 2, 3, 4, 5],
-    holidayDates: '',
-    extraWorkDates: '',
+    holidayDates: CHINA_MAINLAND_2026_HOLIDAY_DATES.join(', '),
+    extraWorkDates: CHINA_MAINLAND_2026_EXTRA_WORK_DATES.join(', '),
+    officialCalendarVersion: OFFICIAL_CALENDAR_VERSION,
     noMessageAsMissing: false,
     unknownSplitTime: '14:00',
     overnightClockOutCutoff: '06:00',
   });
+
+  function getDefaultConfig() {
+    return {
+      ...DEFAULT_CONFIG,
+      workdays: [...DEFAULT_CONFIG.workdays],
+    };
+  }
 
   function pad2(value) {
     return String(value).padStart(2, '0');
@@ -319,6 +349,42 @@
       note: String(value.note || '').trim().slice(0, 300),
       updatedAt: String(value.updatedAt || ''),
     };
+  }
+
+  function mergeManualAdjustments(values) {
+    const merged = new Map();
+    const normalizedValues = values instanceof Map
+      ? [...values.values()]
+      : (Array.isArray(values) ? values : Object.values(values || {}));
+    for (const value of normalizedValues) {
+      const adjustment = normalizeManualAdjustment(value);
+      if (!adjustment) continue;
+      const current = merged.get(adjustment.date);
+      if (!current) {
+        merged.set(adjustment.date, adjustment);
+        continue;
+      }
+
+      let type = current.type;
+      const halfLeavePair = new Set([current.type, adjustment.type]);
+      if (halfLeavePair.has('leave-am') && halfLeavePair.has('leave-pm')) {
+        type = 'leave-full';
+      } else if (adjustment.type !== 'patch' || current.type === 'patch') {
+        type = adjustment.type;
+      }
+      merged.set(adjustment.date, normalizeManualAdjustment({
+        date: adjustment.date,
+        type,
+        clockIn: adjustment.clockIn || current.clockIn,
+        clockOut: adjustment.clockOut || current.clockOut,
+        clockOutNextDay: adjustment.clockOut
+          ? adjustment.clockOutNextDay
+          : current.clockOutNextDay,
+        note: adjustment.note || current.note,
+        updatedAt: adjustment.updatedAt || current.updatedAt,
+      }));
+    }
+    return [...merged.values()].sort((left, right) => left.date.localeCompare(right.date));
   }
 
   function manualAdjustmentLabel(value) {
@@ -638,13 +704,23 @@
     );
   }
 
-  function isScheduledWorkday(date, config) {
+  function mergeDateLists(...values) {
+    const dates = new Set();
+    for (const value of values) {
+      const normalized = Array.isArray(value) ? value.join(',') : value;
+      for (const date of parseDateList(normalized)) dates.add(date);
+    }
+    return [...dates].sort().join(', ');
+  }
+
+  function getDayType(date, config, manualType = '') {
     const key = formatDate(date);
     const extra = parseDateList(config.extraWorkDates);
     const holidays = parseDateList(config.holidayDates);
-    if (extra.has(key)) return true;
-    if (holidays.has(key)) return false;
-    return (config.workdays || []).includes(date.getDay());
+    if (manualType === 'holiday') return '法定节假日';
+    if (extra.has(key)) return '工作日';
+    if (holidays.has(key)) return '法定节假日';
+    return (config.workdays || []).includes(date.getDay()) ? '工作日' : '休息日';
   }
 
   function mergeFlags(target, source) {
@@ -679,11 +755,7 @@
       mergeFlags(day.flags, event.flags || {});
       if (event.text) day.evidence.push(event.text);
     }
-    const manualValues = manualAdjustments instanceof Map
-      ? [...manualAdjustments.values()]
-      : (Array.isArray(manualAdjustments) ? manualAdjustments : Object.values(manualAdjustments || {}));
-    for (const value of manualValues) {
-      const adjustment = normalizeManualAdjustment(value);
+    for (const adjustment of mergeManualAdjustments(manualAdjustments)) {
       if (!adjustment || adjustment.date < config.rangeStart || adjustment.date > config.rangeEnd) continue;
       ensureDay(adjustment.date).manual = adjustment;
     }
@@ -711,22 +783,27 @@
       overtimeDays: 0,
       workMinutes: 0,
       completeWorkDays: 0,
+      fullLeaveWorkDays: 0,
+      travelWorkDays: 0,
+      averageWorkDays: 0,
       averageOvertimeMinutes: 0,
       averageWorkMinutes: 0,
     };
 
     for (let cursor = new Date(start); cursor <= end; cursor = addDays(cursor, 1)) {
       const dateKey = formatDate(cursor);
-      const workday = isScheduledWorkday(cursor, config);
       const day = grouped.get(dateKey) || {
         inTimes: [], outTimes: [], unknownTimes: [], flags: emptyFlags(), evidence: [], manual: null,
       };
       const manual = normalizeManualAdjustment(day.manual);
       const manualType = manual ? manual.type : '';
+      const dayType = getDayType(cursor, config, manualType);
+      const workday = dayType === '工作日';
+      const isLegalHoliday = dayType === '法定节假日';
       const isHalfLeave = manualType === 'leave-am' || manualType === 'leave-pm';
       const isManualFullLeave = manualType === 'leave-full';
       const flags = { ...day.flags };
-      const resolvesRobotAnomaly = ['leave-full', 'leave-am', 'leave-pm', 'patch', 'travel', 'field'].includes(manualType);
+      const resolvesRobotAnomaly = ['holiday', 'leave-full', 'leave-am', 'leave-pm', 'patch', 'travel', 'field'].includes(manualType);
       if (resolvesRobotAnomaly) {
         flags.late = false;
         flags.early = false;
@@ -776,6 +853,9 @@
 
       if (isFuture) {
         labels.push('未到');
+      } else if (isLegalHoliday && !hasPunch) {
+        labels.push('法定节假日');
+        totals.rest += 1;
       } else if (isManualFullLeave) {
         labels.push('全天请假');
         totals.leave += 1;
@@ -877,14 +957,15 @@
           }
         }
       } else if (hasPunch) {
-        labels.push('休息日打卡');
-        totals.attended += 1;
+        labels.push(isLegalHoliday ? '法定节假日打卡' : '休息日打卡');
+        totals.rest += 1;
       }
       if (manualType === 'other' && !isFuture) labels.push('手工说明');
 
       let durationMinutes = null;
       let workMinutes = null;
       let overtimeMinutes = 0;
+      let completeAttendance = false;
       if (clockIn && clockOut) {
         const clockInMinutes = timeToMinutes(clockIn);
         let clockOutMinutes = timeToMinutes(clockOut);
@@ -893,6 +974,7 @@
         const eligibleForWorkStats = (workday || isHalfLeave)
           && !isManualFullLeave
           && !flags.leave
+          && !flags.travel
           && Number.isFinite(schedule.normalStart)
           && Number.isFinite(schedule.overtimeAfter);
         if (eligibleForWorkStats) {
@@ -905,9 +987,26 @@
           workMinutes = normalWorkedMinutes + overtimeMinutes;
           totals.workMinutes += workMinutes;
           totals.completeWorkDays += 1;
+          completeAttendance = true;
           totals.overtimeMinutes += overtimeMinutes;
           if (overtimeMinutes > 0) totals.overtimeDays += 1;
         }
+      }
+      const fullLeaveWorkCredit = workday
+        && !isFuture
+        && (isManualFullLeave || flags.leave);
+      if (fullLeaveWorkCredit) {
+        workMinutes = FULL_DAY_LEAVE_WORK_MINUTES;
+        totals.workMinutes += FULL_DAY_LEAVE_WORK_MINUTES;
+        totals.fullLeaveWorkDays += 1;
+      }
+      const travelWorkCredit = workday
+        && !isFuture
+        && flags.travel;
+      if (travelWorkCredit) {
+        workMinutes = FULL_DAY_LEAVE_WORK_MINUTES;
+        totals.workMinutes += FULL_DAY_LEAVE_WORK_MINUTES;
+        totals.travelWorkDays += 1;
       }
       if (abnormal) totals.abnormal += 1;
       if (!abnormal && !pending && workday && !isFuture && labels.some((label) => /正常/.test(label))) totals.normal += 1;
@@ -918,6 +1017,7 @@
         date: dateKey,
         weekday: `周${WEEKDAY_NAMES[cursor.getDay()]}`,
         workday,
+        dayType,
         clockIn: clockIn || '—',
         clockOut: clockOut || '—',
         expectedOut: schedule.expectedOut || '—',
@@ -926,6 +1026,9 @@
         overtime: overtimeMinutes > 0 ? minutesToDuration(overtimeMinutes) : '—',
         workMinutes,
         overtimeMinutes,
+        completeAttendance,
+        fullLeaveWorkCredit,
+        travelWorkCredit,
         status: [...new Set(labels)].join('、'),
         abnormal,
         pending,
@@ -935,11 +1038,14 @@
         evidence: [...new Set(day.evidence)],
       });
     }
-    totals.averageOvertimeMinutes = totals.overtimeDays
-      ? Math.round(totals.overtimeMinutes / totals.overtimeDays)
+    totals.averageWorkDays = totals.completeWorkDays
+      + totals.fullLeaveWorkDays
+      + totals.travelWorkDays;
+    totals.averageOvertimeMinutes = totals.completeWorkDays
+      ? Math.round(totals.overtimeMinutes / totals.completeWorkDays)
       : 0;
-    totals.averageWorkMinutes = totals.completeWorkDays
-      ? Math.round(totals.workMinutes / totals.completeWorkDays)
+    totals.averageWorkMinutes = totals.averageWorkDays
+      ? Math.round(totals.workMinutes / totals.averageWorkDays)
       : 0;
     return { rows, totals, error: '' };
   }
@@ -951,7 +1057,11 @@
         return row.status !== '未到' && (row.workday || halfDay);
       })
       .map((row) => {
-        const available = Number.isFinite(row.workMinutes);
+        const legacyFullLeave = row.manual?.type === 'leave-full'
+          || /(?:全天请假|^请假$)/.test(String(row.status || ''));
+        const available = row.completeAttendance === undefined
+          ? Number.isFinite(row.workMinutes) && !legacyFullLeave
+          : Boolean(row.completeAttendance);
         return {
           date: row.date,
           weekday: row.weekday,
@@ -1003,11 +1113,13 @@
     extractLeadingMessageDate,
     extractReferencedAttendanceDate,
     getCycleRange,
+    getDefaultConfig,
     getNaturalMonthRange,
     getOvertimeTrendData,
     getScheduleThresholds,
     isAttendanceCycleForMonth,
     manualAdjustmentLabel,
+    mergeManualAdjustments,
     netWorkMinutes,
     normalizeCachedEvent,
     normalizeManualAdjustment,
@@ -1016,6 +1128,7 @@
     timeToMinutes,
   };
   if (typeof globalThis !== 'undefined') globalThis.__FEISHU_ATTENDANCE_TEST__ = TEST_API;
+  if (typeof globalThis !== 'undefined' && globalThis.__FEISHU_ATTENDANCE_PARSER_ONLY__) return;
   if (typeof document === 'undefined' || typeof window === 'undefined') return;
   if (document.getElementById(APP_ID)) return;
 
@@ -1026,7 +1139,20 @@
     } catch (_) {
       stored = {};
     }
-    const config = { ...DEFAULT_CONFIG, ...stored };
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) stored = {};
+    const needsOfficialCalendarMigration = stored.officialCalendarVersion !== OFFICIAL_CALENDAR_VERSION;
+    const config = { ...getDefaultConfig(), ...stored };
+    if (needsOfficialCalendarMigration) {
+      config.holidayDates = mergeDateLists(
+        CHINA_MAINLAND_2026_HOLIDAY_DATES,
+        stored.holidayDates,
+      );
+      config.extraWorkDates = mergeDateLists(
+        CHINA_MAINLAND_2026_EXTRA_WORK_DATES,
+        stored.extraWorkDates,
+      );
+      config.officialCalendarVersion = OFFICIAL_CALENDAR_VERSION;
+    }
     config.workdays = Array.isArray(config.workdays) ? config.workdays.map(Number) : [...DEFAULT_CONFIG.workdays];
     config.cycleStartDay = Math.max(1, Math.min(28, Number(config.cycleStartDay) || 1));
     if (!['fixed', 'flex-linked', 'flex-window'].includes(config.scheduleMode)) {
@@ -1038,6 +1164,13 @@
       config.rangeEnd = config.end;
       delete config.start;
       delete config.end;
+    }
+    if (needsOfficialCalendarMigration) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+      } catch (_) {
+        // Local storage may be unavailable; defaults still apply for this page.
+      }
     }
     return config;
   }
@@ -1822,6 +1955,10 @@
       .check-option { display: flex; align-items: center; gap: 7px; min-height: 40px; padding: 8px 10px; border: 1px solid #e4e7ec; border-radius: 10px; color: #475467; background: #fafbfc; }
       .check-option input { width: 14px; height: 14px; margin: 0; accent-color: var(--fa-primary); }
       .hint { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; color: #697386; background: #f7f8fa; font-size: 10px; line-height: 1.65; }
+      .calculation-policy { margin-top: 10px; padding: 12px; border: 1px solid #dce6ff; border-radius: 11px; color: #475467; background: #f7f9ff; }
+      .calculation-policy h4 { margin: 0 0 7px; color: var(--fa-ink); font-size: 11px; }
+      .calculation-policy ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 18px; margin: 0; padding-left: 17px; font-size: 10px; line-height: 1.6; }
+      .calculation-policy strong { color: #315bc7; }
       .overview { margin-bottom: 14px; }
       .overview-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin: 2px 2px 10px; }
       .overview-head h3 { margin: 0; font-size: 14px; }
@@ -1924,6 +2061,7 @@
       .date-cell span { display: block; margin-top: 3px; color: var(--fa-subtle); font-size: 10px; }
       .day-type, .source-count, .manual-badge { display: inline-flex; align-items: center; padding: 3px 6px; border-radius: 999px; color: #536075; background: #f0f2f5; font-size: 10px; font-weight: 600; }
       .day-type.rest { color: #7c8492; background: #f3f4f6; }
+      .day-type.holiday { color: #315bc7; background: #edf3ff; }
       .manual-badge { color: #315bc7; background: #edf3ff; }
       .source-stack { display: flex; align-items: center; gap: 4px; }
       .edit-row { min-height: 30px !important; padding: 5px 8px !important; }
@@ -1974,6 +2112,7 @@
         .scan-actions button.primary { flex: 1; }
         .settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .schedule-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .calculation-policy ul { grid-template-columns: 1fr; }
         .span-4 { grid-column: 1 / -1; }
         .summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
         .work-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -2027,7 +2166,7 @@
             <svg viewBox="0 0 24 24" fill="none"><path d="M7 3v3M17 3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m8.5 15 2.2 2.1 4.8-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </div>
           <div class="brand-copy">
-            <h2>考勤洞察 <span class="version">v1.0.7</span></h2>
+            <h2>考勤洞察 <span class="version">v1.0.9</span></h2>
             <p>从「假勤」消息生成个人考勤概览</p>
           </div>
           <div class="privacy-pill" title="脚本不上传聊天内容">
@@ -2105,11 +2244,11 @@
                     ${[1, 2, 3, 4, 5, 6, 0].map((day) => `<label><input type="checkbox" name="workday" value="${day}">周${WEEKDAY_NAMES[day]}</label>`).join('')}
                   </div>
                 </div>
-                <label class="span-2">排除日期（节假日，逗号分隔）<input id="holidayDates" type="text" placeholder="2026-10-01, 2026-10-02"></label>
-                <label class="span-2">额外工作日（调休上班，逗号分隔）<input id="extraWorkDates" type="text" placeholder="2026-10-10"></label>
+                <label class="span-2">法定节假日（中国大陆 2026，可编辑）<textarea id="holidayDates" rows="3" placeholder="2026-10-01, 2026-10-02"></textarea></label>
+                <label class="span-2">调休上班日（中国大陆 2026，可编辑）<textarea id="extraWorkDates" rows="3" placeholder="2026-10-10"></textarea></label>
                 <label class="span-2 check-option"><input id="noMessageAsMissing" type="checkbox"> 将没有任何消息的工作日统计为缺卡</label>
               </div>
-              <p class="hint">“弹性联动”按上班时间等量推迟应下班时间，例如 09:10 上班对应 18:40 下班；“独立弹性区间”只判断是否落在两个区间内。上午半天假为 14:00–15:00 上班、18:00–19:00 联动下班；下午半天假为 08:30–09:30 上班、14:00–15:00 联动下班，午休 12:00–13:30 不计工时。周期起始日为 26 时，会自动定位到上月 26 日—本月 25 日。</p>
+              <p class="hint">已按国务院办公厅公布的 2026 年中国大陆放假调休安排预填法定节假日与调休上班日，可继续增删；调休上班日优先于节假日。“弹性联动”按上班时间等量推迟应下班时间，例如 09:10 上班对应 18:40 下班；“独立弹性区间”只判断是否落在两个区间内。上午半天假为 14:00–15:00 上班、18:00–19:00 联动下班；下午半天假为 08:30–09:30 上班、14:00–15:00 联动下班，午休 12:00–13:30 不计工时。周期起始日为 26 时，会自动定位到上月 26 日—本月 25 日。</p>
             </details>
           </section>
           <section id="summary"></section>
@@ -2148,6 +2287,19 @@
               <div class="scan-actions"><button class="action" id="parsePaste">解析粘贴内容</button></div>
             </div>
           </details>
+          <section class="calculation-policy" aria-labelledby="calculationPolicyTitle">
+            <h4 id="calculationPolicyTitle">统一计算口径</h4>
+            <ul>
+              <li>完整出勤日必须同时有上班卡和下班卡；普通休息日和法定节假日即使存在打卡，也只保留明细，不计入“有记录”、工时、加班或平均值。</li>
+              <li>有效工时为正常时段实际工作分钟数（扣除 12:00–13:30 午休）加应下班后的加班分钟数。</li>
+              <li>加班为实际下班晚于当前班次应下班时间的部分；完整出勤但加班为 0 的日期仍进入平均加班分母。</li>
+              <li><strong>平均加班 = 加班总时长 ÷ 全部完整出勤日</strong>，结果四舍五入到分钟。</li>
+              <li>全天请假和工作日出差均固定计入 8 小时工时，不计加班，也不进入完整出勤日数量。</li>
+              <li><strong>平均工时 =（完整出勤有效工时 + 全天请假/工作日出差 8 小时）÷（完整出勤日 + 全天请假日 + 工作日出差日）</strong>；周末出差、普通休息日和法定节假日不参与平均值计算。</li>
+              <li>补卡、半天假、出差和外勤会覆盖对应机器人异常后，使用相同规则重新计算。</li>
+              <li>未来日期不参与汇总；额外工作日优先于配置的节假日，休息日和法定节假日不统计工时与加班。</li>
+            </ul>
+          </section>
         </main>
       </section>
     </div>
@@ -2196,11 +2348,12 @@
 
   function manualRuleText(type) {
     const rules = {
-      'leave-full': '全天请假不计入平均工时；已解析的机器人异常会由此补充说明覆盖。',
+      holiday: '法定节假日不计应出勤、工时或加班，也不进入平均加班和平均工时的分母。',
+      'leave-full': '全天请假按 8 小时计入平均工时；已解析的机器人异常会由此补充说明覆盖。',
       'leave-am': '上午半天假：14:00–15:00 上班，联动 18:00–19:00 下班，净出勤需满 4 小时。',
       'leave-pm': '下午半天假：08:30–09:30 上班，联动 14:00–15:00 下班；12:00–13:30 午休不计工时，净出勤需满 4 小时。',
       patch: '补录的上班或下班时间会覆盖机器人当天对应一侧的打卡，并重新判断迟到、早退和工时。',
-      travel: '出差会覆盖机器人当天的异常提示；如需统计工时，可同时填写实际打卡。',
+      travel: '工作日出差固定按 8 小时计入平均工时；周末出差只保留明细，不进入平均值分母。',
       field: '外出/外勤会标记为有效状态；如填写打卡，也会计算有效工时和加班。',
       other: '仅追加本地说明，不会自动消除机器人识别到的异常。',
     };
@@ -2491,7 +2644,7 @@
     if (/(?:迟到|早退|缺卡|缺勤|旷工)/.test(label)) return 'danger';
     if (/(?:待核对|进行中)/.test(label)) return 'warning';
     if (/(?:正常|已补卡)/.test(label)) return 'success';
-    if (/(?:外勤|请假|出差|无需打卡)/.test(label)) return 'info';
+    if (/(?:外勤|请假|出差|无需打卡|法定节假日)/.test(label)) return 'info';
     return '';
   }
 
@@ -2538,18 +2691,18 @@
           <span class="legend-item" aria-label="绿色空心 K 线和上箭头表示较前一有效日增加"><i class="legend-candle up" aria-hidden="true"></i><b class="legend-direction up">▲</b>增加</span>
           <span class="legend-item" aria-label="红色实心 K 线和下箭头表示较前一有效日减少"><i class="legend-candle down" aria-hidden="true"></i><b class="legend-direction down">▼</b>减少</span>
           <span class="legend-item"><i class="legend-candle flat" aria-hidden="true"></i><b class="legend-direction">—</b>持平</span>
-          ${totals.averageOvertimeMinutes ? '<span class="legend-item"><i class="legend-swatch average"></i>加班日均值</span>' : ''}
+          ${totals.averageOvertimeMinutes ? '<span class="legend-item"><i class="legend-swatch average"></i>完整出勤日均加班</span>' : ''}
           ${gaps.length ? '<span class="legend-item"><i class="legend-swatch gap-link"></i>虚线跨缺卡日</span>' : ''}
         </div>`
       : `<div class="trend-legend" aria-label="趋势图图例">
           <span class="legend-item"><i class="legend-swatch line"></i>每日加班</span>
-          ${totals.averageOvertimeMinutes ? '<span class="legend-item"><i class="legend-swatch average"></i>加班日均值</span>' : ''}
+          ${totals.averageOvertimeMinutes ? '<span class="legend-item"><i class="legend-swatch average"></i>完整出勤日均加班</span>' : ''}
           ${gaps.length ? '<span class="legend-item"><i class="legend-swatch gap"></i>暂无完整打卡</span>' : ''}
         </div>`;
     const heading = isCandlestick ? '加班 K 线' : '加班趋势';
     const summary = isCandlestick
-      ? `覆盖 ${available.length} 个完整打卡日 · ${increases} 涨 ${decreases} 跌 · ${peakText}`
-      : `覆盖 ${available.length} 个完整打卡日 · ${peakText}`;
+      ? `覆盖 ${available.length} 个完整出勤日 · ${increases} 涨 ${decreases} 跌 · ${peakText}`
+      : `覆盖 ${available.length} 个完整出勤日 · ${peakText}`;
     const head = `<div class="trend-head">
       <div><h3>${heading}</h3><p>${summary}</p></div>
       <div class="trend-head-controls">${modeSwitch}${legend}</div>
@@ -2764,7 +2917,7 @@
         </div>
         <div class="summary">
           ${metricCard(totals.workdays, '应出勤', '周期内工作日', 'primary')}
-          ${metricCard(totals.attended, '有记录', '已识别有效状态', 'success')}
+          ${metricCard(totals.attended, '有记录', '工作日有效状态', 'success')}
           ${metricCard(totals.late, '迟到', '超过最晚上班', totals.late ? 'danger' : '')}
           ${metricCard(totals.early, '早退', '早于应下班时间', totals.early ? 'danger' : '')}
           ${metricCard(totals.missing, '缺卡', '缺少上下班卡', totals.missing ? 'danger' : '')}
@@ -2773,10 +2926,10 @@
         <div class="summary work-summary">
           ${metricCard(minutesToDuration(totals.overtimeMinutes), '加班总时间', `${totals.overtimeDays} 个加班日`, totals.overtimeMinutes ? 'primary' : '')}
           ${metricCard(totals.overtimeDays, '加班天数', '下班晚于联动应下班', totals.overtimeDays ? 'primary' : '')}
-          ${metricCard(minutesToDuration(totals.averageOvertimeMinutes), '平均加班时间', '按实际加班日计算')}
-          ${metricCard(minutesToDuration(totals.averageWorkMinutes), '平均工作时间', `${totals.completeWorkDays} 个完整打卡日`)}
+          ${metricCard(minutesToDuration(totals.averageOvertimeMinutes), '平均加班时间', `${totals.completeWorkDays} 个完整出勤日（含 0 加班）`)}
+          ${metricCard(minutesToDuration(totals.averageWorkMinutes), '平均工作时间', `${totals.averageWorkDays} 个计入均值日${totals.fullLeaveWorkDays ? `，含 ${totals.fullLeaveWorkDays} 天全天假` : ''}${totals.travelWorkDays ? `，含 ${totals.travelWorkDays} 个工作日出差` : ''}`)}
         </div>
-        <p class="work-summary-note">有效工时从正常上班起算，扣除 12:00–13:30 午休，再加应下班时间后的加班；平均工时纳入完整上下班卡的半天出勤，排除全天请假与休息日。</p>
+        <p class="work-summary-note">平均加班按全部完整出勤日计算，0 加班日同样进入分母；平均工时纳入完整出勤有效工时，并将每个全天请假日和工作日出差按 8 小时计入；周末出差、普通休息日和法定节假日不参与平均值。</p>
       </div>
       ${renderOvertimeTrend(result.rows, totals)}`;
     if (result.error) {
@@ -2809,6 +2962,8 @@
         .join('');
       const timeCell = (value) => `<span class="time-value${value === '—' ? ' muted' : ''}">${escapeHtml(value)}</span>`;
       const hasHalfDayRule = row.manual && (row.manual.type === 'leave-am' || row.manual.type === 'leave-pm');
+      const dayType = row.dayType || (row.workday ? '工作日' : '休息日');
+      const dayTypeClass = dayType === '法定节假日' ? ' holiday' : (row.workday ? '' : ' rest');
       const source = `<span class="source-stack">
         ${row.evidenceCount ? `<span class="source-count">${row.evidenceCount} 条</span>` : ''}
         ${row.manual ? `<span class="manual-badge">${escapeHtml(row.manualLabel)}</span>` : ''}
@@ -2816,7 +2971,7 @@
       </span>`;
       return `<tr class="${rowClass}" title="${escapeHtml(title)}">
         <td><span class="date-cell"><strong>${row.date}</strong><span>${row.weekday}</span></span></td>
-        <td><span class="day-type${row.workday ? '' : ' rest'}">${row.workday ? '工作日' : '休息日'}</span></td>
+        <td><span class="day-type${dayTypeClass}">${escapeHtml(dayType)}</span></td>
         <td>${timeCell(row.clockIn)}</td><td>${timeCell(row.clockOut)}</td>
         <td>${timeCell(row.workday || hasHalfDayRule ? row.expectedOut : '—')}</td>
         <td>${timeCell(row.workDuration)}</td><td>${timeCell(row.overtime)}</td><td>${timeCell(row.duration)}</td>
@@ -2883,7 +3038,7 @@
     return [
       `考勤周期：${state.config.rangeStart} 至 ${state.config.rangeEnd}`,
       `班次规则：${describeSchedule(state.config)}`,
-      `应出勤 ${totals.workdays} 天；有打卡/有效状态 ${totals.attended} 天；迟到 ${totals.late} 次；早退 ${totals.early} 次；缺卡 ${totals.missing} 次；待核对 ${totals.pending} 天。`,
+      `应出勤 ${totals.workdays} 天；工作日有记录 ${totals.attended} 天；迟到 ${totals.late} 次；早退 ${totals.early} 次；缺卡 ${totals.missing} 次；待核对 ${totals.pending} 天。`,
       `加班总计 ${minutesToDuration(totals.overtimeMinutes)}（${totals.overtimeDays} 天）；平均加班 ${minutesToDuration(totals.averageOvertimeMinutes)}；平均工作 ${minutesToDuration(totals.averageWorkMinutes)}。`,
       manualRows.length ? `本地补充 ${manualRows.length} 天：${manualRows.map((row) => `${row.date} ${row.manualLabel}${row.manual.note ? `（${row.manual.note}）` : ''}`).join('；')}` : '本周期无本地考勤补充。',
       abnormalRows.length ? '异常/待核对明细：' : '未发现异常或待核对日期。',
@@ -2923,7 +3078,7 @@
     const lines = [
       ['日期', '星期', '日期类型', '上班打卡', '下班打卡', '应下班时间', '有效工时', '加班时间', '时间跨度', '状态', '本地补充类型', '本地补充说明', '解析消息数', '消息原文'],
       ...rows.map((row) => [
-        row.date, row.weekday, row.workday ? '工作日' : '休息日', row.clockIn, row.clockOut,
+        row.date, row.weekday, row.dayType || (row.workday ? '工作日' : '休息日'), row.clockIn, row.clockOut,
         row.expectedOut, row.workDuration, row.overtime, row.duration, row.status,
         row.manualLabel, row.manual ? row.manual.note : '', row.evidenceCount, row.evidence.join(' | '),
       ]),

@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="飞书假勤本地考勤报告">
+  <title>我的考勤报告</title>
+  <style>
+__ATTENDANCE_REPORT_STYLES__
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#daily-details">跳到每日明细</a>
+  <div class="page-shell">
+    <header class="hero" aria-labelledby="page-title">
+      <div class="hero-main">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M12 7v5l3.2 1.9M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div>
+          <p class="eyebrow">ATTENDANCE REPORT</p>
+          <h1 id="page-title">我的考勤报告</h1>
+          <p class="hero-period" id="hero-period">正在读取报告…</p>
+        </div>
+      </div>
+      <div class="hero-actions" aria-label="报告操作">
+        <button class="icon-button" id="theme-toggle" type="button" aria-label="切换深浅色" title="切换深浅色">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M20.4 15.4A8.5 8.5 0 0 1 8.6 3.6 8.5 8.5 0 1 0 20.4 15.4Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <button class="button button-ghost" id="copy-summary" type="button">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="8" y="8" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.8"/>
+          </svg>
+          复制摘要
+        </button>
+        <button class="button button-ghost" id="export-csv" type="button">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          导出 CSV
+        </button>
+        <button class="button button-primary" id="print-report" type="button">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M7 8V3h10v5M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M7 14h10v7H7v-7Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+          </svg>
+          打印
+        </button>
+      </div>
+      <div class="hero-meta" aria-label="数据来源">
+        <span id="source-method">数据源 —</span>
+        <span id="source-count">消息 —</span>
+        <span id="generated-time">生成时间 —</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="card period-card" aria-labelledby="period-title">
+        <div class="period-heading">
+          <div>
+            <p class="section-kicker">ATTENDANCE PERIOD</p>
+            <h2 id="period-title">切换周期</h2>
+            <p>直接使用本报告内的全部消息重新计算，无需再次采集。</p>
+          </div>
+          <div class="period-active" id="period-active" aria-live="polite">当前周期 —</div>
+        </div>
+        <div class="period-toolbar" id="period-controls">
+          <div class="period-modes" role="group" aria-label="周期类型">
+            <button class="period-mode-button" type="button" data-period-mode="all" aria-pressed="false">全部</button>
+            <button class="period-mode-button" type="button" data-period-mode="detected" aria-pressed="false">
+              考勤周期 <span id="detected-cycle-count">0</span>
+            </button>
+            <button class="period-mode-button" type="button" data-period-mode="natural" aria-pressed="false">自然月</button>
+            <button class="period-mode-button" type="button" data-period-mode="cycle" aria-pressed="false">固定起始日</button>
+            <button class="period-mode-button" type="button" data-period-mode="custom" aria-pressed="false">自定义</button>
+          </div>
+
+          <div class="period-editors">
+            <div class="period-editor" data-period-panel="all" hidden>
+              <div class="period-all-summary">
+                <span>可用数据范围</span>
+                <strong id="all-period-range">—</strong>
+              </div>
+            </div>
+
+            <div class="period-editor" data-period-panel="detected">
+              <label class="period-field period-field-wide" for="detected-cycle-select">
+                <span>历史考勤周期</span>
+                <select id="detected-cycle-select"></select>
+              </label>
+            </div>
+
+            <div class="period-editor" data-period-panel="natural" hidden>
+              <label class="period-field" for="natural-month">
+                <span>自然月</span>
+                <input id="natural-month" type="month" required>
+              </label>
+            </div>
+
+            <div class="period-editor" data-period-panel="cycle" hidden>
+              <label class="period-field" for="cycle-month">
+                <span>归属月份</span>
+                <input id="cycle-month" type="month" required>
+              </label>
+              <label class="period-field period-field-short" for="cycle-start-day">
+                <span>每月起始日</span>
+                <input id="cycle-start-day" type="number" min="1" max="28" inputmode="numeric" required>
+              </label>
+            </div>
+
+            <div class="period-editor period-editor-custom" data-period-panel="custom" hidden>
+              <label class="period-field" for="custom-period-start">
+                <span>开始日期</span>
+                <input id="custom-period-start" type="date" required>
+              </label>
+              <span class="period-range-arrow" aria-hidden="true">→</span>
+              <label class="period-field" for="custom-period-end">
+                <span>结束日期</span>
+                <input id="custom-period-end" type="date" required>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="period-feedback">
+          <p id="period-data-note">选择后会自动加载并重新计算。</p>
+          <p class="period-error" id="period-error" role="alert" aria-live="assertive"></p>
+        </div>
+      </section>
+
+      <section class="attention-card" id="attention-card" aria-labelledby="attention-title" hidden>
+        <div class="attention-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M12 8v4m0 4h.01M10.3 3.7 2.6 17a2 2 0 0 0 1.73 3h15.34a2 2 0 0 0 1.73-3L13.7 3.7a2 2 0 0 0-3.4 0Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div>
+          <h2 id="attention-title">需要核对</h2>
+          <p id="attention-copy"></p>
+        </div>
+        <button class="button button-warning" id="show-attention" type="button">开始核对</button>
+      </section>
+
+      <section class="section-block" aria-labelledby="overview-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">OVERVIEW</p>
+            <h2 id="overview-title">周期概览</h2>
+          </div>
+          <div class="overview-chips">
+            <div class="coverage-chip" id="coverage-chip">记录覆盖 —</div>
+            <div class="coverage-chip review-progress-chip" id="review-progress-chip">核对进度 —</div>
+          </div>
+        </div>
+        <div class="metric-grid" id="metric-grid"></div>
+      </section>
+
+      <section class="dashboard-grid" aria-label="考勤图表和重点日期">
+        <article class="card chart-card" aria-labelledby="chart-title">
+          <div class="card-heading">
+            <div>
+              <p class="section-kicker">OVERTIME</p>
+              <h2 id="chart-title">每日加班 K 线</h2>
+              <p id="chart-subtitle">完整出勤日的加班时长</p>
+            </div>
+            <div class="chart-head-controls">
+              <div class="chart-mode-switch" role="group" aria-label="加班图表类型">
+                <button class="chart-mode-button" type="button" data-chart-mode="candlestick" aria-pressed="true">K 线</button>
+                <button class="chart-mode-button" type="button" data-chart-mode="line" aria-pressed="false">趋势图</button>
+              </div>
+              <div class="chart-legend" id="chart-legend" aria-label="图表图例"></div>
+            </div>
+          </div>
+          <div class="chart-scroll" tabindex="0" aria-label="每日加班图表，可横向滚动">
+            <svg id="overtime-chart" class="overtime-chart" role="img"></svg>
+          </div>
+          <p class="chart-hint" id="chart-hint">K 线比较前一完整出勤日与当日加班；曲线按全部完整出勤日（含 0 加班日）展示累计平均加班。</p>
+        </article>
+
+        <aside class="card review-card" aria-labelledby="review-title">
+          <div class="card-heading">
+            <div>
+              <p class="section-kicker">REVIEW</p>
+              <h2 id="review-title">重点日期</h2>
+              <p id="review-subtitle">点击日期即可直接核对或补充</p>
+            </div>
+          </div>
+          <div class="review-list" id="review-list"></div>
+        </aside>
+      </section>
+
+      <section class="card details-card" id="daily-details" aria-labelledby="details-title">
+        <div class="details-heading">
+          <div>
+            <p class="section-kicker">DAILY DETAILS</p>
+            <h2 id="details-title">每日明细</h2>
+            <p id="details-caption">正在加载…</p>
+          </div>
+          <div class="details-tools">
+            <label class="search-field" for="table-search">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8"/>
+                <path d="m20 20-4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+              <span class="sr-only">搜索每日明细</span>
+              <input id="table-search" type="search" placeholder="搜索日期或状态">
+            </label>
+            <button class="button button-secondary" id="toggle-order" type="button" aria-pressed="true">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M8 6h11M8 12h8M8 18h5M3 5v14m0 0-2-2m2 2 2-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              近期在前
+            </button>
+            <button class="button button-secondary" id="export-manual" type="button">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              导出补充 JSON
+            </button>
+          </div>
+        </div>
+        <div class="filter-row" role="group" aria-label="明细筛选">
+          <button class="filter-button is-active" type="button" data-filter="all" aria-pressed="true">全部 <span id="count-all">0</span></button>
+          <button class="filter-button" type="button" data-filter="attention" aria-pressed="false">待处理 <span id="count-attention">0</span></button>
+          <button class="filter-button" type="button" data-filter="reviewed" aria-pressed="false">已核对 <span id="count-reviewed">0</span></button>
+          <button class="filter-button" type="button" data-filter="normal" aria-pressed="false">正常 <span id="count-normal">0</span></button>
+          <button class="filter-button" type="button" data-filter="leave" aria-pressed="false">请假/出差 <span id="count-leave">0</span></button>
+          <button class="filter-button" type="button" data-filter="rest" aria-pressed="false">休息/节假日 <span id="count-rest">0</span></button>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <caption class="sr-only">每日考勤明细</caption>
+            <thead>
+              <tr>
+                <th scope="col">日期</th>
+                <th scope="col">类型</th>
+                <th scope="col">上班</th>
+                <th scope="col">下班</th>
+                <th scope="col">应下班</th>
+                <th scope="col">有效工时</th>
+                <th scope="col">加班</th>
+                <th scope="col">状态</th>
+                <th scope="col">来源</th>
+                <th scope="col">核对</th>
+              </tr>
+            </thead>
+            <tbody id="details-body"></tbody>
+          </table>
+          <div class="empty-state" id="empty-state" hidden>
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 5h16M4 12h10M4 19h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            <p>没有符合当前条件的记录。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card rules-card" aria-labelledby="calculation-rules-title">
+        <div class="rules-heading">
+          <div>
+            <p class="section-kicker">CALCULATION RULES</p>
+            <h2 id="calculation-rules-title">计算规则</h2>
+            <p id="rules-current-summary">所有指标使用同一套计算口径。</p>
+          </div>
+          <div class="rule-formulas" aria-label="核心平均值公式">
+            <div class="rule-formula">
+              <span>平均加班</span>
+              <strong>加班总时长 ÷ 全部完整出勤日</strong>
+            </div>
+            <div class="rule-formula">
+              <span>平均工时</span>
+              <strong>工时总计 ÷ 计入均值日</strong>
+            </div>
+          </div>
+        </div>
+        <details class="calculation-rules" open>
+          <summary>
+            <span>查看全部计算口径</span>
+            <span class="rules-summary-note">7 组规则</span>
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="m7 9 5 5 5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </summary>
+          <div class="rules-grid">
+            <article class="rule-group">
+              <span class="rule-number">01</span>
+              <h3>统计范围</h3>
+              <p id="rule-scope-detail"></p>
+            </article>
+            <article class="rule-group">
+              <span class="rule-number">02</span>
+              <h3>工作日认定</h3>
+              <p id="rule-workday-detail"></p>
+            </article>
+            <article class="rule-group">
+              <span class="rule-number">03</span>
+              <h3>打卡取值</h3>
+              <p id="rule-punch-detail"></p>
+            </article>
+            <article class="rule-group">
+              <span class="rule-number">04</span>
+              <h3>班次与半天假</h3>
+              <p id="rule-schedule-detail"></p>
+              <p>上午半天假按 14:00–15:00 上班、18:00–19:00 联动下班；下午半天假按 08:30–09:30 上班、14:00–15:00 联动下班。</p>
+            </article>
+            <article class="rule-group">
+              <span class="rule-number">05</span>
+              <h3>有效工时与加班</h3>
+              <p>完整出勤日必须同时有上班卡和下班卡。有效工时为正常时段实际工作分钟数，扣除 12:00–13:30 午休，再加应下班时间后的加班；周末出差、普通休息日和法定节假日即使有打卡，也只保留明细，不计入“有记录”、工时、加班或平均值。</p>
+              <p>加班 = max（0，实际下班 − 当前班次应下班时间）。</p>
+            </article>
+            <article class="rule-group">
+              <span class="rule-number">06</span>
+              <h3>请假与人工补充</h3>
+              <p>全天请假和工作日出差固定计入 8 小时工时，不计加班，也不属于完整出勤日；完整打卡的半天假按对应 4 小时班次计算。人工标记的法定节假日会覆盖当天异常。</p>
+              <p id="rule-missing-detail"></p>
+            </article>
+            <article class="rule-group rule-group-average">
+              <span class="rule-number">07</span>
+              <h3>平均值与舍入</h3>
+              <p><strong>平均加班 = 加班总时长 ÷ 全部完整出勤日</strong>，0 加班日同样进入分母；全天请假和法定节假日不进入该分母。</p>
+              <p id="rule-overtime-current"></p>
+              <p><strong>平均工时 =（完整出勤有效工时 + 全天请假/工作日出差 × 8 小时）÷（完整出勤日 + 全天请假日 + 工作日出差日）</strong>；周末出差、普通休息日和法定节假日不参与计算。</p>
+              <p id="rule-work-current"></p>
+              <p>所有平均值最终四舍五入到分钟。</p>
+            </article>
+          </div>
+        </details>
+      </section>
+    </main>
+
+    <footer>
+      <p>报告仅基于当前可访问的「假勤」消息和本地补充推算，最终结果以飞书考勤后台为准。</p>
+      <p id="footer-period"></p>
+    </footer>
+  </div>
+
+  <dialog class="reconcile-dialog" id="reconcile-dialog" aria-labelledby="reconcile-title" aria-describedby="reconcile-description">
+    <form class="reconcile-form" id="reconcile-form" novalidate>
+      <header class="reconcile-head">
+        <div>
+          <p class="section-kicker">RECONCILIATION</p>
+          <h2 id="reconcile-title">核对考勤记录</h2>
+          <p id="reconcile-description">保存后会立即按油猴脚本的同一套规则重新计算。</p>
+        </div>
+        <button class="dialog-close" id="reconcile-close" type="button" aria-label="关闭核对窗口" title="关闭">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </header>
+      <div class="reconcile-body">
+        <div class="reconcile-current" aria-label="当前识别结果">
+          <div>
+            <span>考勤日期</span>
+            <strong id="reconcile-date">—</strong>
+          </div>
+          <div>
+            <span>当前打卡</span>
+            <strong id="reconcile-current-time">— → —</strong>
+          </div>
+          <div>
+            <span>当前状态</span>
+            <strong id="reconcile-current-status">—</strong>
+          </div>
+        </div>
+        <details class="reconcile-evidence" id="reconcile-evidence">
+          <summary>
+            <span>查看当天识别依据</span>
+            <span id="reconcile-evidence-count">0 条</span>
+          </summary>
+          <div class="reconcile-evidence-list" id="reconcile-evidence-list"></div>
+        </details>
+        <div class="reconcile-grid">
+          <label class="full-field">
+            <span>核对结果</span>
+            <select id="reconcile-type" required>
+              <option value="confirmed">原记录无误，仅标记已核对</option>
+              <option value="holiday">法定节假日</option>
+              <option value="patch">补卡或更正打卡时间</option>
+              <option value="leave-full">全天请假</option>
+              <option value="leave-am">上午半天假</option>
+              <option value="leave-pm">下午半天假</option>
+              <option value="travel">出差</option>
+              <option value="field">外出或外勤</option>
+              <option value="other">其他说明</option>
+            </select>
+          </label>
+          <label>
+            <span>上班时间（可选）</span>
+            <input id="reconcile-clock-in" type="time">
+          </label>
+          <label>
+            <span>下班时间（可选）</span>
+            <input id="reconcile-clock-out" type="time">
+          </label>
+          <label class="check-field full-field">
+            <input id="reconcile-next-day" type="checkbox">
+            <span>下班卡发生在次日 00:00–05:59</span>
+          </label>
+          <label class="full-field">
+            <span>核对说明（可选）</span>
+            <textarea id="reconcile-note" rows="3" maxlength="300" placeholder="例如：补卡审批已通过、当天出差、已确认记录无误"></textarea>
+          </label>
+        </div>
+        <p class="reconcile-hint" id="reconcile-hint" role="status" aria-live="polite"></p>
+        <p class="reconcile-error" id="reconcile-error" role="alert" aria-live="assertive"></p>
+      </div>
+      <footer class="reconcile-actions">
+        <button class="button button-danger reconcile-delete" id="reconcile-delete" type="button" hidden>删除本地核对</button>
+        <button class="button button-secondary" id="reconcile-cancel" type="button">取消</button>
+        <button class="button button-primary-local" type="submit">保存并重新计算</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="fatal-error" id="fatal-error" role="alert" hidden>
+    <h1>报告无法显示</h1>
+    <p id="fatal-message"></p>
+  </div>
+  <script id="attendance-report-data" type="application/json">__ATTENDANCE_REPORT_DATA__</script>
+  <script>
+window.__FEISHU_ATTENDANCE_PARSER_ONLY__ = true;
+  </script>
+  <script>
+__ATTENDANCE_PARSER_SCRIPT__
+  </script>
+  <script>
+delete window.__FEISHU_ATTENDANCE_PARSER_ONLY__;
+  </script>
+  <script>
+__ATTENDANCE_REPORT_SCRIPT__
+  </script>
+</body>
+</html>

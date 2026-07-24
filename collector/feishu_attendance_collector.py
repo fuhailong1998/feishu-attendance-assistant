@@ -12,7 +12,6 @@ import argparse
 import base64
 import hashlib
 import json
-import os
 import re
 import sqlite3
 import sys
@@ -22,47 +21,22 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import urlopen
-from zoneinfo import ZoneInfo
 
 from playwright.sync_api import Browser, Page, sync_playwright
+
+from attendance_common import (
+    ATTENDANCE_TERMS,
+    PUNCH_TERMS,
+    TIME_ZONE,
+    atomic_write_private,
+    local_datetime,
+    range_label,
+)
 
 
 DEFAULT_CDP = "http://127.0.0.1:9237"
 DEFAULT_ORIGIN = "https://thundersoft.feishu.cn"
 DEFAULT_OUTPUT = Path(".attendance-data/attendance-messages.json")
-TIME_ZONE = ZoneInfo("Asia/Shanghai")
-ATTENDANCE_TERMS = (
-    "假勤",
-    "考勤",
-    "打卡",
-    "缺卡",
-    "漏卡",
-    "迟到",
-    "早退",
-    "旷工",
-    "补卡",
-    "外勤",
-    "请假",
-    "出差",
-    "无需打卡",
-    "上班打卡成功",
-    "下班打卡成功",
-    "考勤申请截止时间提醒",
-    "Clocked in successfully",
-    "Clocked out successfully",
-    "Attendance reminder",
-    "Attendance requests closing soon",
-    "No record notification",
-    "Missing punch",
-    "Weekly Report",
-    "Monthly Report",
-)
-PUNCH_TERMS = (
-    "上班打卡成功",
-    "下班打卡成功",
-    "Clocked in successfully",
-    "Clocked out successfully",
-)
 HUMAN_TEXT_RE = re.compile(
     r"[\u3400-\u9fff]|"
     r"(?:attendance|clock|check|record|punch|work|leave|overtime|shift|detail)",
@@ -369,13 +343,6 @@ def message_text(content: str) -> str:
     return "\n".join(deduplicated)
 
 
-def local_datetime(timestamp: float) -> datetime:
-    numeric = float(timestamp or 0)
-    if numeric > 10_000_000_000:
-        numeric /= 1000
-    return datetime.fromtimestamp(numeric, tz=TIME_ZONE)
-
-
 def collect_messages(
     connection: sqlite3.Connection,
     chat_id: str,
@@ -404,31 +371,6 @@ def collect_messages(
             "updated_at": local_datetime(float(update_time or create_time or 0)).isoformat(),
         })
     return messages
-
-
-def atomic_write_private(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(path.parent, 0o700)
-    except OSError:
-        pass
-    temporary = path.with_name(path.name + ".tmp")
-    data = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-    with temporary.open("w", encoding="utf-8") as handle:
-        handle.write(data)
-    try:
-        os.chmod(temporary, 0o600)
-    except OSError:
-        pass
-    temporary.replace(path)
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
-
-
-def range_label(timestamp: float) -> str:
-    return local_datetime(timestamp).strftime("%Y-%m-%d %H:%M") if timestamp else "—"
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
